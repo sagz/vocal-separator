@@ -551,6 +551,7 @@ ALL_ARCH_SETTING_LOAD = 'Load for Full Application'
 # Mappers
 
 DEFAULT_DATA = {
+        'smart_defaults': True,
         'chosen_process_method': MDX_ARCH_TYPE,
         'vr_model': CHOOSE_MODEL,
         'aggression_setting': 5,

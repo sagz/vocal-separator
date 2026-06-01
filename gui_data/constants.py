@@ -640,6 +640,7 @@ DEFAULT_DATA = {
         'is_primary_stem_only': False,
         'is_secondary_stem_only': False,
         'is_testing_audio': False,#
+        'is_auto_dynamic_scaling': True,
         'is_auto_update_model_params': True,#
         'is_add_model_name': False,
         'is_accept_any_input': False,
@@ -754,6 +755,7 @@ SETTING_CHECK = ('vr_model',
                'is_primary_stem_only',
                'is_secondary_stem_only',
                'is_testing_audio',#
+               'is_auto_dynamic_scaling',
                'is_auto_update_model_params',#
                'is_add_model_name',
                "is_accept_any_input",

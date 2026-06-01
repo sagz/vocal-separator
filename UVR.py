@@ -1529,6 +1529,7 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
         if not is_windows:
             self.update_idletasks()
         self.fill_gpu_list()
+        self.update_auto_scaling()
         self.online_data_refresh(user_refresh=False, is_start_up=True)
         
     # Menu Functions
@@ -1967,6 +1968,11 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
 
         ### SHARED SETTINGS ###
         
+        # Auto Dynamic Scaling
+        self.is_auto_dynamic_scaling_Option = ttk.Checkbutton(master=self.options_Frame, text='Auto Scaling', variable=self.is_auto_dynamic_scaling_var, command=self.update_auto_scaling)
+        self.is_auto_dynamic_scaling_Option_place = lambda:self.is_auto_dynamic_scaling_Option.place(x=CHECK_BOX_X, y=CHECK_BOX_Y, width=CHECK_BOX_WIDTH, height=CHECK_BOX_HEIGHT, relx=1/3, rely=4/self.COL2_ROWS, relwidth=1/3, relheight=1/self.COL2_ROWS)
+        self.help_hints(self.is_auto_dynamic_scaling_Option, text='Dynamically scales Segment Size and Batch Size to prevent OOM errors.')
+
         # GPU Selection
         self.is_gpu_conversion_Option = ttk.Checkbutton(master=self.options_Frame, text=GPU_CONVERSION_MAIN_LABEL, variable=self.is_gpu_conversion_var)
         self.is_gpu_conversion_Option_place = lambda:self.is_gpu_conversion_Option.place(x=CHECK_BOX_X, y=CHECK_BOX_Y, width=CHECK_BOX_WIDTH, height=CHECK_BOX_HEIGHT, relx=1/3, rely=5/self.COL2_ROWS, relwidth=1/3, relheight=1/self.COL2_ROWS)
@@ -3550,11 +3556,15 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
         demucs_title_Label.grid(pady=MENU_PADDING_2)
         
         if not self.chosen_process_method_var.get() == DEMUCS_ARCH_TYPE:
-            segment_Label = self.menu_sub_LABEL_SET(demucs_frame, SEGMENTS_TEXT)
-            segment_Label.grid(pady=MENU_PADDING_2)
-            segment_Option = ComboBoxEditableMenu(demucs_frame, values=DEMUCS_SEGMENTS, width=MENU_COMBOBOX_WIDTH, textvariable=self.segment_var, pattern=REG_SEGMENTS, default=DEMUCS_SEGMENTS)#
-            segment_Option.grid()
-            self.help_hints(segment_Label, text=SEGMENT_HELP)
+            self.adv_segment_Label = self.menu_sub_LABEL_SET(demucs_frame, SEGMENTS_TEXT)
+            self.adv_segment_Label.grid(pady=MENU_PADDING_2)
+            self.adv_segment_Option = ComboBoxEditableMenu(demucs_frame, values=DEMUCS_SEGMENTS, width=MENU_COMBOBOX_WIDTH, textvariable=self.segment_var, pattern=REG_SEGMENTS, default=DEMUCS_SEGMENTS)#
+            self.adv_segment_Option.grid()
+            self.help_hints(self.adv_segment_Label, text=SEGMENT_HELP)
+            
+            if self.is_auto_dynamic_scaling_var.get():
+                self.adv_segment_Option.configure(state=tk.DISABLED)
+                self.adv_segment_Label.configure(text=f"SEGMENTS (Auto: {self.segment_var.get()})")
         
         self.shifts_Label = self.menu_sub_LABEL_SET(demucs_frame, SHIFTS_TEXT)
         self.shifts_Label.grid(pady=MENU_PADDING_1)
@@ -3626,11 +3636,15 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
         compensate_Option.grid(pady=MENU_PADDING_4)
         self.help_hints(compensate_Label, text=COMPENSATE_HELP)
 
-        mdx_segment_size_Label = self.menu_sub_LABEL_SET(mdx_net_frame, SEGMENT_SIZE_TEXT)
-        mdx_segment_size_Label.grid(pady=MENU_PADDING_4)
-        mdx_segment_size_Option = ComboBoxEditableMenu(mdx_net_frame, values=MDX_SEGMENTS, width=MENU_COMBOBOX_WIDTH, textvariable=self.mdx_segment_size_var, pattern=REG_MDX_SEG, default="256")#
-        mdx_segment_size_Option.grid(pady=MENU_PADDING_4)
-        self.help_hints(mdx_segment_size_Label, text=MDX_SEGMENT_SIZE_HELP)
+        self.adv_mdx_segment_size_Label = self.menu_sub_LABEL_SET(mdx_net_frame, SEGMENT_SIZE_TEXT)
+        self.adv_mdx_segment_size_Label.grid(pady=MENU_PADDING_4)
+        self.adv_mdx_segment_size_Option = ComboBoxEditableMenu(mdx_net_frame, values=MDX_SEGMENTS, width=MENU_COMBOBOX_WIDTH, textvariable=self.mdx_segment_size_var, pattern=REG_MDX_SEG, default="256")#
+        self.adv_mdx_segment_size_Option.grid(pady=MENU_PADDING_4)
+        self.help_hints(self.adv_mdx_segment_size_Label, text=MDX_SEGMENT_SIZE_HELP)
+        
+        if self.is_auto_dynamic_scaling_var.get():
+            self.adv_mdx_segment_size_Option.configure(state=tk.DISABLED)
+            self.adv_mdx_segment_size_Label.configure(text=f"SEGMENT SIZE (Auto: {self.mdx_segment_size_var.get()})")
 
         overlap_mdx_Label = self.menu_sub_LABEL_SET(mdx_net_frame, OVERLAP_TEXT)
         overlap_mdx_Label.grid(pady=MENU_PADDING_4)
@@ -3683,11 +3697,15 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
         mdx23_opt_title = self.menu_title_LABEL_SET(mdx_net23_frame, ADVANCED_MDXNET23_OPTIONS_TEXT)
         mdx23_opt_title.grid(pady=MENU_PADDING_2)
         
-        mdx_batch_size_Label = self.menu_sub_LABEL_SET(mdx_net23_frame, BATCH_SIZE_TEXT)
-        mdx_batch_size_Label.grid(pady=MENU_PADDING_1)
-        mdx_batch_size_Option = ComboBoxEditableMenu(mdx_net23_frame, values=BATCH_SIZE, width=MENU_COMBOBOX_WIDTH, textvariable=self.mdx_batch_size_var, pattern=REG_BATCHES, default=BATCH_SIZE)#
-        mdx_batch_size_Option.grid(pady=MENU_PADDING_1)
-        self.help_hints(mdx_batch_size_Label, text=BATCH_SIZE_HELP)
+        self.mdx_batch_size_Label = self.menu_sub_LABEL_SET(mdx_net23_frame, BATCH_SIZE_TEXT)
+        self.mdx_batch_size_Label.grid(pady=MENU_PADDING_1)
+        self.mdx_batch_size_Option = ComboBoxEditableMenu(mdx_net23_frame, values=BATCH_SIZE, width=MENU_COMBOBOX_WIDTH, textvariable=self.mdx_batch_size_var, pattern=REG_BATCHES, default=BATCH_SIZE)#
+        self.mdx_batch_size_Option.grid(pady=MENU_PADDING_1)
+        self.help_hints(self.mdx_batch_size_Label, text=BATCH_SIZE_HELP)
+        
+        if self.is_auto_dynamic_scaling_var.get():
+            self.mdx_batch_size_Option.configure(state=tk.DISABLED)
+            self.mdx_batch_size_Label.configure(text=f"BATCH SIZE (Auto: {self.mdx_batch_size_var.get()})")
         
         overlap_mdx23_Label = self.menu_sub_LABEL_SET(mdx_net23_frame, OVERLAP_TEXT)
         overlap_mdx23_Label.grid(pady=MENU_PADDING_1)
@@ -5683,6 +5701,7 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
 
         def general_shared_buttons():
             place_widgets(self.is_gpu_conversion_Option_place, 
+                          self.is_auto_dynamic_scaling_Option_place,
                           self.model_sample_mode_Option_place)
 
         def stem_save_options():
@@ -5989,6 +6008,8 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
             if method_type in selection:
                 self.selection_action_models(model_var.get())
                 break
+                
+        self.update_auto_scaling()
 
     def selection_action_chosen_ensemble(self, selection):
         """Activates specific actions depending on selected ensemble option"""
@@ -6685,6 +6706,199 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
             playsound(FAIL_CHIME) if self.is_task_complete_var.get() else None
             self.process_end(error=e)
 
+    def get_vram_info(self):
+        total_vram, free_vram = None, None
+        try:
+            if cuda_available:
+                import torch
+                device = 0
+                if self.device_set_var.get() != DEFAULT:
+                    try:
+                        device_str = self.device_set_var.get()
+                        if ":" in device_str:
+                            device = int(device_str.split(":")[-1])
+                    except Exception:
+                        pass
+                free_vram, total_vram = torch.cuda.mem_get_info(device)
+            elif mps_available:
+                import psutil
+                vm = psutil.virtual_memory()
+                total_vram = vm.total
+                free_vram = vm.available
+        except Exception as e:
+            pass
+        return total_vram, free_vram
+
+    def update_auto_scaling(self, *args):
+        if not self.is_auto_dynamic_scaling_var.get():
+            self.mdx_segment_size_Option.configure(state=tk.NORMAL)
+            # Batch size is in advanced options frame but might not exist if UI isn't fully drawn
+            if hasattr(self, 'mdx_batch_size_Option'):
+                try:
+                    self.mdx_batch_size_Option.configure(state=tk.NORMAL)
+                except tk.TclError:
+                    pass
+                except Exception:
+                    pass
+            if hasattr(self, 'adv_mdx_segment_size_Option'):
+                try:
+                    self.adv_mdx_segment_size_Option.configure(state=tk.NORMAL)
+                except tk.TclError:
+                    pass
+                except Exception:
+                    pass
+            self.segment_Option.configure(state=tk.NORMAL)
+            if hasattr(self, 'adv_segment_Option'):
+                try:
+                    self.adv_segment_Option.configure(state=tk.NORMAL)
+                except tk.TclError:
+                    pass
+                except Exception:
+                    pass
+            # Reset labels
+            if hasattr(self, 'mdx_segment_size_Label'):
+                try:
+                    self.mdx_segment_size_Label.configure(text=SEGMENT_MDX_MAIN_LABEL)
+                except tk.TclError:
+                    pass
+            if hasattr(self, 'mdx_batch_size_Label'):
+                try:
+                    self.mdx_batch_size_Label.configure(text=BATCH_SIZE_TEXT)
+                except tk.TclError:
+                    pass
+                except Exception:
+                    pass
+            if hasattr(self, 'adv_mdx_segment_size_Label'):
+                try:
+                    self.adv_mdx_segment_size_Label.configure(text=SEGMENT_SIZE_TEXT)
+                except tk.TclError:
+                    pass
+                except Exception:
+                    pass
+            if hasattr(self, 'segment_Label'):
+                try:
+                    self.segment_Label.configure(text=SEGMENTS_TEXT)
+                except tk.TclError:
+                    pass
+                except Exception:
+                    pass
+            if hasattr(self, 'adv_segment_Label'):
+                try:
+                    self.adv_segment_Label.configure(text=SEGMENTS_TEXT)
+                except tk.TclError:
+                    pass
+                except Exception:
+                    pass
+            return
+            
+        total_vram, _ = self.get_vram_info()
+        if total_vram is None:
+            total_vram = 8 * 1024**3 # Fallback to 8GB
+            
+        vram_gb = total_vram / (1024**3)
+        usable_vram_gb = vram_gb * 0.8
+        
+        mdx_batch = "1"
+        mdx_segment = "256"
+        demucs_segment = "10"
+        
+        native_mdx_segment = 256
+        if self.chosen_process_method_var.get() == MDX_ARCH_TYPE:
+            selection = self.mdx_net_model_var.get()
+            if selection and selection not in CHOOSE_MODEL:
+                try:
+                    model_data = self.assemble_model_data(selection, MDX_ARCH_TYPE)[0]
+                    if model_data.mdx_c_configs is not None and hasattr(model_data.mdx_c_configs, 'inference') and hasattr(model_data.mdx_c_configs.inference, 'dim_t'):
+                        native_mdx_segment = model_data.mdx_c_configs.inference.dim_t
+                except:
+                    pass
+            
+        if usable_vram_gb >= 18:
+            mdx_batch = "4"
+            mdx_segment = str(max(native_mdx_segment, 512))
+        elif usable_vram_gb >= 12:
+            mdx_batch = "3"
+            mdx_segment = str(native_mdx_segment)
+        elif usable_vram_gb >= 9:
+            mdx_batch = "2"
+            mdx_segment = str(native_mdx_segment)
+        elif usable_vram_gb >= 6:
+            mdx_batch = "1"
+            mdx_segment = str(native_mdx_segment)
+        else:
+            mdx_batch = "1"
+            mdx_segment = str(min(native_mdx_segment, 128))
+            
+        if usable_vram_gb >= 16:
+            demucs_segment = "40"
+        elif usable_vram_gb >= 8:
+            demucs_segment = "20"
+        elif usable_vram_gb >= 4:
+            demucs_segment = "10"
+        else:
+            demucs_segment = "5"
+            
+        # Update UI elements
+        if self.chosen_process_method_var.get() == MDX_ARCH_TYPE:
+            self.mdx_segment_size_var.set(mdx_segment)
+            self.mdx_batch_size_var.set(mdx_batch)
+            try:
+                self.mdx_segment_size_Option.configure(state=tk.DISABLED)
+            except Exception:
+                pass
+            if hasattr(self, 'mdx_batch_size_Option'):
+                try:
+                    self.mdx_batch_size_Option.configure(state=tk.DISABLED)
+                except Exception:
+                    pass
+            if hasattr(self, 'adv_mdx_segment_size_Option'):
+                try:
+                    self.adv_mdx_segment_size_Option.configure(state=tk.DISABLED)
+                except Exception:
+                    pass
+            if hasattr(self, 'mdx_segment_size_Label'):
+                try:
+                    self.mdx_segment_size_Label.configure(text=f"SEGMENT SIZE (Auto: {mdx_segment})")
+                except Exception:
+                    pass
+            if hasattr(self, 'mdx_batch_size_Label'):
+                try:
+                    self.mdx_batch_size_Label.configure(text=f"BATCH SIZE (Auto: {mdx_batch})")
+                except Exception:
+                    pass
+            if hasattr(self, 'adv_mdx_segment_size_Label'):
+                try:
+                    self.adv_mdx_segment_size_Label.configure(text=f"SEGMENT SIZE (Auto: {mdx_segment})")
+                except Exception:
+                    pass
+                    
+        elif self.chosen_process_method_var.get() == DEMUCS_ARCH_TYPE:
+            self.segment_var.set(demucs_segment)
+            try:
+                self.segment_Option.configure(state=tk.DISABLED)
+            except Exception:
+                pass
+            if hasattr(self, 'adv_segment_Option'):
+                try:
+                    self.adv_segment_Option.configure(state=tk.DISABLED)
+                except Exception:
+                    pass
+            if hasattr(self, 'segment_Label'):
+                try:
+                    self.segment_Label.configure(text=f"SEGMENTS (Auto: {demucs_segment})")
+                except Exception:
+                    pass
+            if hasattr(self, 'adv_segment_Label'):
+                try:
+                    self.adv_segment_Label.configure(text=f"SEGMENTS (Auto: {demucs_segment})")
+                except Exception:
+                    pass
+                    
+        # Log to console
+        print(f"[Auto Dynamic Scaling] Detected VRAM: {vram_gb:.2f}GB. "
+              f"Setting MDX segment={mdx_segment}, batch={mdx_batch}. "
+              f"Demucs segment={demucs_segment}.")
+
     #--Varible Methods--
 
     def load_to_default_confirm(self):
@@ -6828,6 +7042,7 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
         self.is_primary_stem_only_var = tk.BooleanVar(value=data['is_primary_stem_only'])
         self.is_secondary_stem_only_var = tk.BooleanVar(value=data['is_secondary_stem_only'])
         self.is_testing_audio_var = tk.BooleanVar(value=data['is_testing_audio'])#
+        self.is_auto_dynamic_scaling_var = tk.BooleanVar(value=data.get('is_auto_dynamic_scaling', True))
         self.is_auto_update_model_params_var = tk.BooleanVar(value=True)#
         self.is_auto_update_model_params = data['is_auto_update_model_params']
         self.is_add_model_name_var = tk.BooleanVar(value=data['is_add_model_name'])
@@ -6957,6 +7172,7 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
             self.is_primary_stem_only_var.set(loaded_setting['is_primary_stem_only'])
             self.is_secondary_stem_only_var.set(loaded_setting['is_secondary_stem_only'])
             self.is_testing_audio_var.set(loaded_setting['is_testing_audio'])#
+            self.is_auto_dynamic_scaling_var.set(loaded_setting.get('is_auto_dynamic_scaling', True))
             self.is_auto_update_model_params_var.set(loaded_setting['is_auto_update_model_params'])
             self.is_add_model_name_var.set(loaded_setting['is_add_model_name'])
             self.is_accept_any_input_var.set(loaded_setting["is_accept_any_input"])
@@ -7090,6 +7306,7 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
             'is_primary_stem_only': self.is_primary_stem_only_var.get(),
             'is_secondary_stem_only': self.is_secondary_stem_only_var.get(),
             'is_testing_audio': self.is_testing_audio_var.get(),#
+            'is_auto_dynamic_scaling': self.is_auto_dynamic_scaling_var.get(),
             'is_auto_update_model_params': self.is_auto_update_model_params_var.get(),
             'is_add_model_name': self.is_add_model_name_var.get(),
             'is_accept_any_input': self.is_accept_any_input_var.get(),

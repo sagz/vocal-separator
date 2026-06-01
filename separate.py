@@ -34,7 +34,7 @@ from onnx2pytorch import ConvertModel
 import gc
  
 if TYPE_CHECKING:
-    from UVR import ModelData
+    from lib_v5.inference_config import ModelData
 
 # if not is_macos:
 #     import torch_directml

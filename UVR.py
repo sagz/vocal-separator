@@ -6708,15 +6708,68 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
                                     'is_ensemble_master': is_ensemble,
                                     'is_4_stem_ensemble': True if self.ensemble_main_stem_var.get() in [FOUR_STEM_ENSEMBLE, MULTI_STEM_ENSEMBLE] and is_ensemble else False}
                     
-                    if current_model.process_method == VR_ARCH_TYPE:
-                        seperator = SeperateVR(current_model, process_data)
-                    if current_model.process_method == MDX_ARCH_TYPE:
-                        seperator = SeperateMDXC(current_model, process_data) if current_model.is_mdx_c else SeperateMDX(current_model, process_data)
-                    if current_model.process_method == DEMUCS_ARCH_TYPE:
-                        seperator = SeperateDemucs(current_model, process_data)
+                    try:
+                        import xmlrpc.client
+                        import pickle
+                        import time
                         
-                    seperator.seperate()
-                    
+                        clean_process_data = dict(process_data)
+                        clean_process_data['set_progress_bar'] = None
+                        clean_process_data['write_to_console'] = None
+                        clean_process_data['process_iteration'] = None
+                        clean_process_data['cached_source_callback'] = None
+                        clean_process_data['cached_model_source_holder'] = None
+                        
+                        # We need to make sure we don't pickle huge unpicklable things. 
+                        # ModelData has references to root but we'll try to just pickle it as is.
+                        # Sometimes pickling fails because of some tk objects. We'll fallback to original behavior if it fails.
+                        config = {
+                            'model_data': current_model,
+                            'process_data': clean_process_data
+                        }
+                        
+                        try:
+                            config_bytes = pickle.dumps(config)
+                            proxy = xmlrpc.client.ServerProxy("http://127.0.0.1:8123/", allow_none=True)
+                            # Get the required env based on model name / type for isolated environment
+                            env_profile = "default"
+                            if "scnet" in current_model.model_basename.lower() or "legacy" in current_model.model_basename.lower():
+                                env_profile = "isolated_env"
+                            
+                            task_id = proxy.start_task(config_bytes, env_profile)
+                            
+                            while self.is_check_splash: # Use existing run flag
+                                st = proxy.get_status(task_id)
+                                if st.get("status") == "error":
+                                    write_to_console("Error from backend: " + st.get("error", "") + "\n")
+                                    break
+                                    
+                                if st.get("log"):
+                                    write_to_console(st["log"])
+                                    
+                                if st.get("progress"):
+                                    set_progress_bar(st["progress"])
+                                    
+                                if st.get("status") in ["completed", "failed", "terminated"]:
+                                    if st.get("status") == "failed":
+                                        write_to_console(f"Worker failed!\n")
+                                    break
+                                    
+                                time.sleep(0.1)
+                                
+                        except Exception as backend_e:
+                            write_to_console(f"\nBackend execution failed, falling back to local: {backend_e}\n")
+                            # Fallback local processing
+                            if current_model.process_method == VR_ARCH_TYPE:
+                                seperator = SeperateVR(current_model, process_data)
+                            if current_model.process_method == MDX_ARCH_TYPE:
+                                seperator = SeperateMDXC(current_model, process_data) if current_model.is_mdx_c else SeperateMDX(current_model, process_data)
+                            if current_model.process_method == DEMUCS_ARCH_TYPE:
+                                seperator = SeperateDemucs(current_model, process_data)
+                            seperator.seperate()
+                    except Exception as e:
+                        write_to_console(f"\nError initializing process: {e}\n")
+                        
                     if is_ensemble:
                         self.command_Text.write('\n')
 
@@ -7339,7 +7392,19 @@ if __name__ == "__main__":
     root.is_root_defined_var.set(True)
     root.is_check_splash = True
 
+    backend_process = None
+    try:
+        import subprocess
+        backend_process = subprocess.Popen([sys.executable, "backend_service.py"])
+    except Exception as e:
+        print("Could not start backend service:", e)
+
     root.update() if is_windows else root.update_idletasks()
     root.deiconify()
     root.configure(bg=BG_COLOR)
-    root.mainloop()
+    try:
+        root.mainloop()
+    finally:
+        if backend_process:
+            backend_process.terminate()
+

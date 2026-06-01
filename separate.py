@@ -1311,9 +1311,9 @@ def save_format(audio_path, save_format, mp3_bit_set):
     
     if not save_format == WAV:
         
-        if OPERATING_SYSTEM == 'Darwin':
-            FFMPEG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ffmpeg')
-            pydub.AudioSegment.converter = FFMPEG_PATH
+        # Internal resource path for FFmpeg
+        FFMPEG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bin', 'ffmpeg.exe' if OPERATING_SYSTEM == 'Windows' else 'ffmpeg')
+        pydub.AudioSegment.converter = FFMPEG_PATH
         
         musfile = pydub.AudioSegment.from_wav(audio_path)
         

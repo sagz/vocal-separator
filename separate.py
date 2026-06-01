@@ -202,6 +202,25 @@ class SeperateAttributes:
             self.compensate = model_data.compensate
             self.mdx_segment_size = model_data.mdx_segment_size
             
+            if hasattr(self, 'device') and type(self.device) == str and self.device.startswith('cuda'):
+                try:
+                    import torch
+                    vram_gb = torch.cuda.get_device_properties(self.device).total_memory / (1024**3)
+                    if vram_gb <= 6.0:
+                        self.mdx_segment_size = min(self.mdx_segment_size, 256)
+                        if isinstance(self.overlap_mdx, (float, int)):
+                            self.overlap_mdx = min(self.overlap_mdx, 0.5)
+                        if isinstance(self.overlap_mdx23, (int, float)):
+                            self.overlap_mdx23 = min(self.overlap_mdx23, 4)
+                    elif vram_gb <= 8.0:
+                        self.mdx_segment_size = min(self.mdx_segment_size, 512)
+                        if isinstance(self.overlap_mdx, (float, int)):
+                            self.overlap_mdx = min(self.overlap_mdx, 0.75)
+                        if isinstance(self.overlap_mdx23, (int, float)):
+                            self.overlap_mdx23 = min(self.overlap_mdx23, 6)
+                except:
+                    pass
+            
             if self.is_mdx_c:
                 if not self.is_4_stem_ensemble:
                     self.primary_stem = model_data.ensemble_primary_stem if process_data['is_ensemble_master'] else model_data.primary_stem
@@ -485,6 +504,8 @@ class SeperateMDX(SeperateAttributes):
                 self.dim_c, self.hop = model_params['dim_c'], model_params['hop_length']
                 separator = MdxnetSet.ConvTDFNet(**model_params)
                 self.model_run = separator.load_from_checkpoint(self.model_path).to(self.device).eval()
+                if self.device != 'cpu':
+                    self.model_run = self.model_run.half()
             else:
                 if self.mdx_segment_size == self.dim_t and not self.is_other_gpu:
                     ort_ = ort.InferenceSession(self.model_path, providers=self.run_type)
@@ -591,7 +612,7 @@ class SeperateMDX(SeperateAttributes):
                 for mix_wave in mix_waves:
                     self.running_inference_progress_bar(total_chunks, is_match_mix=is_match_mix)
 
-                    tar_waves = self.run_model(mix_wave, is_match_mix=is_match_mix)
+                    tar_waves = self.run_model_with_retry(mix_wave, chunk_size, is_match_mix=is_match_mix)
                     
                     if window is not None:
                         tar_waves[..., :chunk_size_actual] *= window 
@@ -632,9 +653,76 @@ class SeperateMDX(SeperateAttributes):
         if is_match_mix:
             spec_pred = spek.cpu().numpy()
         else:
+            if self.device != 'cpu' and getattr(self, 'is_mdx_ckpt', False):
+                spek = spek.half()
+            
             spec_pred = -self.model_run(-spek)*0.5+self.model_run(spek)*0.5 if self.is_denoise else self.model_run(spek)
+            
+            if self.device != 'cpu' and getattr(self, 'is_mdx_ckpt', False):
+                spec_pred = spec_pred.float()
 
         return self.stft.inverse(torch.tensor(spec_pred).to(self.device)).cpu().detach().numpy()
+
+
+    def run_model_with_retry(self, mix_wave, current_chunk_size, is_match_mix=False):
+        try:
+            return self.run_model(mix_wave, is_match_mix)
+        except Exception as e:
+            if "out of memory" in str(e).lower() or "cublas" in str(e).lower() or "allocate" in str(e).lower():
+                import gc
+                gc.collect()
+                if torch.cuda.is_available(): torch.cuda.empty_cache()
+                
+                current_mdx_segment_size = (current_chunk_size // self.hop) + 1
+                if current_mdx_segment_size <= 256:
+                    raise Exception(f"OOM persists even at floor segment size 256. Error: {e}")
+                
+                new_mdx_segment_size = max(256, int(current_mdx_segment_size * 0.75))
+                new_chunk_size = self.hop * (new_mdx_segment_size - 1)
+                
+                if getattr(self, "write_to_console", None):
+                    self.write_to_console(f" Auto-downscaled segment size to {new_mdx_segment_size} due to OOM...", base_text='')
+
+                return self.process_sub_chunk(mix_wave, new_chunk_size, self.overlap_mdx, is_match_mix)
+            else:
+                raise e
+
+    def process_sub_chunk(self, mix_wave, chunk_size, overlap, is_match_mix):
+        step = chunk_size - self.n_fft if overlap == DEFAULT or overlap == 0.0 else int((1 - overlap) * chunk_size)
+        L = mix_wave.shape[-1]
+        result = np.zeros((1, 2, L), dtype=np.float32)
+        divider = np.zeros((1, 2, L), dtype=np.float32)
+        
+        mix_wave_np = mix_wave.cpu().numpy()[0]
+        
+        for i in range(0, L, step):
+            start = i
+            end = min(i + chunk_size, L)
+            chunk_size_actual = end - start
+            
+            if overlap == 0 or overlap == DEFAULT or overlap == 0.0:
+                window = None
+            else:
+                window = np.hanning(chunk_size_actual)
+                window = np.tile(window[None, None, :], (1, 2, 1))
+                
+            mix_part_ = mix_wave_np[:, start:end]
+            if end != i + chunk_size:
+                pad_size = (i + chunk_size) - end
+                mix_part_ = np.concatenate((mix_part_, np.zeros((2, pad_size), dtype='float32')), axis=-1)
+                
+            sub_mix_wave = torch.tensor([mix_part_], dtype=torch.float32).to(self.device)
+            tar_waves = self.run_model_with_retry(sub_mix_wave, chunk_size, is_match_mix)
+            
+            if window is not None:
+                tar_waves[..., :chunk_size_actual] *= window
+                divider[..., start:end] += window
+            else:
+                divider[..., start:end] += 1
+                
+            result[..., start:end] += tar_waves[..., :end-start]
+            
+        return result / divider
 
 class SeperateMDXC(SeperateAttributes):        
 
@@ -740,6 +828,8 @@ class SeperateMDXC(SeperateAttributes):
         model = TFC_TDF_net(self.mdx_c_configs, device=self.device)
         model.load_state_dict(torch.load(self.model_path, map_location=cpu))
         model.to(self.device).eval()
+        if self.device != 'cpu':
+            model = model.half()
         mix = torch.tensor(mix, dtype=torch.float32)
 
         try:
@@ -762,13 +852,13 @@ class SeperateMDXC(SeperateAttributes):
         batches = [chunks[i : i + batch_size] for i in range(0, len(chunks), batch_size)]
         
         X = torch.zeros(S, *mix.shape) if S > 1 else torch.zeros_like(mix)
-        X = X.to(self.device)
+        # X = X.to(self.device)  # CPU offloaded
 
         with torch.no_grad():
             cnt = 0
             for batch in batches:
                 self.running_inference_progress_bar(len(batches))
-                x = model(batch.to(self.device))
+                x = self.process_mdxc_batch_with_retry(model, batch, chunk_size, overlap, mdx_segment_size)
                 
                 for w in x:
                     X[..., cnt * hop_size : cnt * hop_size + chunk_size] += w
@@ -793,6 +883,62 @@ class SeperateMDXC(SeperateAttributes):
             est_s = estimated_sources.cpu().detach().numpy()
             del estimated_sources
             return pitch_fix(est_s) if self.is_pitch_change else est_s
+
+
+    def process_mdxc_batch_with_retry(self, model, batch, chunk_size, overlap, current_mdx_segment_size):
+        try:
+            batch_device = batch.to(self.device)
+            if self.device != 'cpu':
+                batch_device = batch_device.half()
+            return model(batch_device).cpu().float()
+        except Exception as e:
+            if "out of memory" in str(e).lower() or "cublas" in str(e).lower() or "allocate" in str(e).lower():
+                import gc
+                gc.collect()
+                if torch.cuda.is_available(): torch.cuda.empty_cache()
+                
+                if batch.shape[0] > 1:
+                    if getattr(self, "write_to_console", None):
+                        self.write_to_console(f" Auto-downscaled batch size to 1 due to OOM...", base_text='')
+                    out = []
+                    for i in range(batch.shape[0]):
+                        out.append(self.process_mdxc_batch_with_retry(model, batch[i:i+1], chunk_size, overlap, current_mdx_segment_size))
+                    return torch.cat(out, dim=0)
+
+                if current_mdx_segment_size <= 256:
+                    raise Exception(f"OOM persists even at floor segment size 256. Error: {e}")
+                
+                new_mdx_segment_size = max(256, int(current_mdx_segment_size * 0.75))
+                new_chunk_size = self.mdx_c_configs.audio.hop_length * (new_mdx_segment_size - 1)
+                
+                if getattr(self, "write_to_console", None):
+                    self.write_to_console(f" Auto-downscaled segment size to {new_mdx_segment_size} due to OOM...", base_text='')
+
+                return self.process_mdxc_sub_chunk(model, batch, new_chunk_size, overlap, new_mdx_segment_size)
+            else:
+                raise e
+
+    def process_mdxc_sub_chunk(self, model, batch, chunk_size, overlap, mdx_segment_size):
+        L = batch.shape[-1]
+        hop_size = chunk_size // overlap
+        
+        pad_size = hop_size - (L - chunk_size) % hop_size if (L - chunk_size) % hop_size != 0 else 0
+        batch_padded = torch.cat([torch.zeros(batch.shape[0], 2, chunk_size - hop_size), batch.cpu(), torch.zeros(batch.shape[0], 2, pad_size + chunk_size - hop_size)], -1)
+        
+        chunks = batch_padded.unfold(2, chunk_size, hop_size).permute(2, 0, 1, 3)
+        
+        S = model.num_target_instruments if hasattr(model, 'num_target_instruments') else model.module.num_target_instruments
+        # We know B=1 here, but let's shape X as [B, S, 2, L_pad] or [B, 2, L_pad]
+        X = torch.zeros(batch.shape[0], S, 2, batch_padded.shape[-1]) if S > 1 else torch.zeros_like(batch_padded)
+        
+        for i in range(chunks.shape[0]):
+            chunk_batch = chunks[i]
+            x = self.process_mdxc_batch_with_retry(model, chunk_batch, chunk_size, overlap, mdx_segment_size)
+            # x is [B, S, 2, chunk_size] or [B, 2, chunk_size]
+            X[..., i * hop_size : i * hop_size + chunk_size] += x
+                
+        estimated_sources = X[..., chunk_size - hop_size:-(pad_size + chunk_size - hop_size)] / overlap
+        return estimated_sources
 
 class SeperateDemucs(SeperateAttributes):
     def seperate(self):

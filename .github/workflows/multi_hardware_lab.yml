@@ -1,0 +1,47 @@
+name: Automated Multi-Hardware Lab
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+
+jobs:
+  bit_exact_parity:
+    name: Parity check on ${{ matrix.os }} (${{ matrix.hardware }})
+    runs-on: ${{ matrix.runner_labels }}
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: Windows
+            hardware: NVIDIA
+            runner_labels: [self-hosted, windows, gpu, nvidia]
+          - os: macOS
+            hardware: Apple Silicon
+            runner_labels: [self-hosted, macOS, arm64, mps]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          ./install_packages.sh
+
+      - name: Run Inference & Verify Bit-Exact Parity
+        run: |
+          python test_parity.py --audio tests/reference_audio/test_track.wav --export tests/output/${{ matrix.hardware }} --model models/MDX_Net_Models/UVR-MDX-NET-Inst_HQ_3.onnx --method "MDX-Net" --reference-dir tests/gold_standard_library/mdx_net
+
+      - name: Upload Artifacts on Failure
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: failed-outputs-${{ matrix.hardware }}
+          path: tests/output/${{ matrix.hardware }}/*.wav

@@ -35,17 +35,19 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from datetime import datetime
-from gui_data.constants import *
+from core.constants import *
 from gui_data.app_size_values import *
-from gui_data.error_handling import error_text, error_dialouge
+from core.error_handling import error_text, error_dialouge
 from gui_data.old_data_check import file_check, remove_unneeded_yamls, remove_temps
 from gui_data.tkinterdnd2 import TkinterDnD, DND_FILES
 from lib_v5.vr_network.model_param_init import ModelParameters
 from kthread import KThread
 from lib_v5 import spec_utils
 from pathlib  import Path
-from separate import (
-    SeperateDemucs, SeperateMDX, SeperateMDXC, SeperateVR,  # Model-related
+from core.plugin_api import PluginManager
+PluginManager.load_plugins()
+from core.separation import (
+
     save_format, clear_gpu_cache,  # Utility functions
     cuda_available, mps_available, #directml_available,
 )
@@ -381,6 +383,7 @@ class ModelData():
         self.demucs_stem_count = 0
         self.mixer_path = MDX_MIXER_PATH
         self.model_name = model_name
+        self.model_path = ""
         self.process_method = selected_process_method
         self.model_status = False if self.model_name == CHOOSE_MODEL or self.model_name == NO_MODEL else True
         self.primary_stem = None
@@ -1594,7 +1597,9 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
         if arch_type == MDX_ARCH_TYPE:
             model_data: List[ModelData] = [ModelData(model, MDX_ARCH_TYPE)]
         if arch_type == DEMUCS_ARCH_TYPE:
-            model_data: List[ModelData] = [ModelData(model, DEMUCS_ARCH_TYPE)]#
+            model_data: List[ModelData] = [ModelData(model, DEMUCS_ARCH_TYPE)]
+        elif PluginManager.get_plugin(arch_type):
+            model_data: List[ModelData] = [ModelData(model, arch_type)]
 
         return model_data
         
@@ -6628,12 +6633,15 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
                                     'is_ensemble_master': is_ensemble,
                                     'is_4_stem_ensemble': True if self.ensemble_main_stem_var.get() in [FOUR_STEM_ENSEMBLE, MULTI_STEM_ENSEMBLE] and is_ensemble else False}
                     
-                    if current_model.process_method == VR_ARCH_TYPE:
-                        seperator = SeperateVR(current_model, process_data)
-                    if current_model.process_method == MDX_ARCH_TYPE:
-                        seperator = SeperateMDXC(current_model, process_data) if current_model.is_mdx_c else SeperateMDX(current_model, process_data)
-                    if current_model.process_method == DEMUCS_ARCH_TYPE:
-                        seperator = SeperateDemucs(current_model, process_data)
+                    if current_model.process_method == MDX_ARCH_TYPE and current_model.is_mdx_c:
+                        plugin_class = PluginManager.get_plugin("MDXC")
+                    else:
+                        plugin_class = PluginManager.get_plugin(current_model.process_method)
+                        
+                    if plugin_class:
+                        seperator = plugin_class(current_model, process_data)
+                    else:
+                        raise ValueError(f"No plugin found for process method: {current_model.process_method}")
                         
                     seperator.seperate()
                     

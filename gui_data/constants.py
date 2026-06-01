@@ -551,6 +551,9 @@ ALL_ARCH_SETTING_LOAD = 'Load for Full Application'
 # Mappers
 
 DEFAULT_DATA = {
+        'ext_env_vr': '',
+        'ext_env_mdx': '',
+        'ext_env_demucs': '',
         'chosen_process_method': MDX_ARCH_TYPE,
         'vr_model': CHOOSE_MODEL,
         'aggression_setting': 5,

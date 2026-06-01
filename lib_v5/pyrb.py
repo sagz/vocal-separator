@@ -13,7 +13,10 @@ else:
 
 __all__ = ['time_stretch', 'pitch_shift']
 
-__RUBBERBAND_UTIL = os.path.join(BASE_PATH_RUB, 'rubberband')
+import platform
+is_windows = platform.system() == "Windows"
+base_dir = BASE_PATH_RUB if getattr(sys, 'frozen', False) else os.path.dirname(BASE_PATH_RUB)
+__RUBBERBAND_UTIL = os.path.join(base_dir, 'bin', 'rubberband.exe' if is_windows else 'rubberband')
 
 if six.PY2:
     DEVNULL = open(os.devnull, 'w')

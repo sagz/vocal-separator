@@ -1974,6 +1974,11 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
         self.is_gpu_conversion_Enable = lambda:self.is_gpu_conversion_Option.configure(state=tk.NORMAL)
         self.help_hints(self.is_gpu_conversion_Option, text=IS_GPU_CONVERSION_HELP)
 
+        # Smart Auto Mode
+        self.is_smart_auto_Option = ttk.Checkbutton(master=self.options_Frame, text=SMART_AUTO_MAIN_LABEL, variable=self.is_smart_auto_var, command=self.update_main_widget_states)
+        self.is_smart_auto_Option_place = lambda:self.is_smart_auto_Option.place(x=CHECK_BOX_X, y=CHECK_BOX_Y, width=CHECK_BOX_WIDTH, height=CHECK_BOX_HEIGHT, relx=2/3, rely=5/self.COL2_ROWS, relwidth=1/3, relheight=1/self.COL2_ROWS)
+        self.help_hints(self.is_smart_auto_Option, text=IS_SMART_AUTO_HELP)
+
         # Vocal Only
         self.is_primary_stem_only_Option = ttk.Checkbutton(master=self.options_Frame, textvariable=self.is_primary_stem_only_Text_var, variable=self.is_primary_stem_only_var, command=lambda:self.is_primary_stem_only_Option_toggle())
         self.is_primary_stem_only_Option_place = lambda:self.is_primary_stem_only_Option.place(x=CHECK_BOX_X, y=CHECK_BOX_Y, width=CHECK_BOX_WIDTH, height=CHECK_BOX_HEIGHT, relx=1/3, rely=6/self.COL2_ROWS, relwidth=1/3, relheight=1/self.COL2_ROWS)
@@ -5683,6 +5688,7 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
 
         def general_shared_buttons():
             place_widgets(self.is_gpu_conversion_Option_place, 
+                          self.is_smart_auto_Option_place,
                           self.model_sample_mode_Option_place)
 
         def stem_save_options():
@@ -5713,21 +5719,23 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
             place_widgets(self.vr_model_Label_place, self.vr_model_Option_place, 
                           self.aggression_setting_Label_place, 
                           self.aggression_setting_Option_place, 
-                          self.window_size_Label_place, 
-                          self.window_size_Option_place, 
                           general_shared_buttons, 
                           stem_save_options, 
                           no_ensemble_shared)
+            if not self.is_smart_auto_var.get():
+                place_widgets(self.window_size_Label_place, 
+                              self.window_size_Option_place)
         elif process_method == DEMUCS_ARCH_TYPE:
             place_widgets(self.demucs_model_Label_place, 
                           self.demucs_model_Option_place, 
                           self.demucs_stems_Label_place, 
                           self.demucs_stems_Option_place, 
-                          self.segment_Label_place, 
-                          self.segment_Option_place, 
                           general_shared_buttons, 
                           stem_save_demucs_options, 
                           no_ensemble_shared)
+            if not self.is_smart_auto_var.get():
+                place_widgets(self.segment_Label_place, 
+                              self.segment_Option_place)
         elif process_method == AUDIO_TOOLS:
             place_widgets(self.chosen_audio_tool_Label_place, 
                           self.chosen_audio_tool_Option_place)
@@ -5935,8 +5943,9 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
         if not is_model_status:
             var.set(CHOOSE_MODEL)
             if ai_type == MDX_ARCH_TYPE:
-                self.mdx_segment_size_Label_place()
-                self.mdx_segment_size_Option_place()
+                if not self.is_smart_auto_var.get():
+                    self.mdx_segment_size_Label_place()
+                    self.mdx_segment_size_Option_place()
                 self.overlap_mdx_Label_place()
                 self.overlap_mdx_Option_place()
                 self.update_stem_checkbox_labels(PRIMARY_STEM, disable_boxes=True)
@@ -5952,15 +5961,17 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
                         self.mdxnet_stems_Label_place()
                         self.mdxnet_stems_Option_place()
                     else:
-                        self.mdx_segment_size_Label_place()
-                        self.mdx_segment_size_Option_place()
+                        if not self.is_smart_auto_var.get():
+                            self.mdx_segment_size_Label_place()
+                            self.mdx_segment_size_Option_place()
                     self.overlap_mdx_Label_place()
                     self.overlap_mdx23_Option_place()
                     self.update_button_states_mdx(model_data.mdx_model_stems)
                 else:
                     if ai_type == MDX_ARCH_TYPE:
-                        self.mdx_segment_size_Label_place()
-                        self.mdx_segment_size_Option_place()
+                        if not self.is_smart_auto_var.get():
+                            self.mdx_segment_size_Label_place()
+                            self.mdx_segment_size_Option_place()
                         self.overlap_mdx_Label_place()
                         self.overlap_mdx_Option_place()
 
@@ -6625,6 +6636,7 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
                                     'cached_source_callback': self.cached_source_callback,
                                     'cached_model_source_holder': self.cached_model_source_holder,
                                     'list_all_models': self.all_models,
+                                    'is_smart_auto': self.is_smart_auto_var.get(),
                                     'is_ensemble_master': is_ensemble,
                                     'is_4_stem_ensemble': True if self.ensemble_main_stem_var.get() in [FOUR_STEM_ENSEMBLE, MULTI_STEM_ENSEMBLE] and is_ensemble else False}
                     
@@ -6825,6 +6837,7 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
         self.device_set_var = tk.StringVar(value=data['device_set'])#
         self.user_code_var = tk.StringVar(value=data['user_code']) 
         self.is_gpu_conversion_var = tk.BooleanVar(value=data['is_gpu_conversion'])
+        self.is_smart_auto_var = tk.BooleanVar(value=data['is_smart_auto'])
         self.is_primary_stem_only_var = tk.BooleanVar(value=data['is_primary_stem_only'])
         self.is_secondary_stem_only_var = tk.BooleanVar(value=data['is_secondary_stem_only'])
         self.is_testing_audio_var = tk.BooleanVar(value=data['is_testing_audio'])#
@@ -7087,6 +7100,7 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
             'pitch_rate': self.pitch_rate_var.get(),#
             'is_time_correction': self.is_time_correction_var.get(),#
             'is_gpu_conversion': self.is_gpu_conversion_var.get(),
+            'is_smart_auto': self.is_smart_auto_var.get(),
             'is_primary_stem_only': self.is_primary_stem_only_var.get(),
             'is_secondary_stem_only': self.is_secondary_stem_only_var.get(),
             'is_testing_audio': self.is_testing_audio_var.get(),#

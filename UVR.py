@@ -4052,6 +4052,9 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
         copy_text_Button = ttk.Button(error_log_frame, text=COPY_ALL_TEXT_TEXT, width=14, command=lambda:(pyperclip.copy(error_details_Text.get(1.0, tk.END+"-1c")), copied_var.set('Copied!')))
         copy_text_Button.grid(padx=20,pady=MENU_PADDING_1)
         
+        generate_report_Button = ttk.Button(error_log_frame, text="Generate Health Report", width=22, command=lambda:self.generate_health_report(error_details_Text))
+        generate_report_Button.grid(padx=20,pady=MENU_PADDING_1)
+        
         report_issue_Button = ttk.Button(error_log_frame, text=REPORT_ISSUE_TEXT, width=14, command=lambda:webbrowser.open_new_tab(ISSUE_LINK))
         report_issue_Button.grid(padx=20,pady=MENU_PADDING_1)
 
@@ -4062,6 +4065,83 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
         error_log_close_Button.grid(padx=20,pady=MENU_PADDING_1)
         
         self.menu_placement(error_log_screen, UVR_ERROR_LOG_TEXT)
+
+    def generate_health_report(self, text_widget):
+        import platform
+        import sys
+        import os
+        import torch
+        from __version__ import VERSION
+
+        def redact_sensitive_info(text):
+            if not text: return text
+            system = platform.system()
+            username = os.environ.get('USERNAME') if system == 'Windows' else os.environ.get('USER')
+            if not username:
+                username = os.environ.get('LOGNAME')
+            if username:
+                text = text.replace(f"\\Users\\{username}", "\\Users\\[REDACTED]")
+                text = text.replace(f"/Users/{username}", "/Users/[REDACTED]")
+                text = text.replace(f"/home/{username}", "/home/[REDACTED]")
+                text = text.replace(f"/{username}/", "/[REDACTED]/")
+                text = text.replace(f"\\{username}\\", "\\[REDACTED]\\")
+            return text
+
+        report = []
+        report.append("### System Health Report")
+        report.append("")
+        report.append(f"- **UVR Version:** {VERSION}")
+        report.append(f"- **OS:** {platform.system()} {platform.release()} ({platform.version()})")
+        report.append(f"- **Architecture:** {platform.machine()}")
+        report.append(f"- **Python Version:** {sys.version.split(' ')[0]}")
+        
+        # CUDA/MPS check
+        cuda_available = False
+        mps_available = False
+        gpu_hardware = "None Detected"
+        
+        try:
+            if torch.cuda.is_available():
+                cuda_available = True
+                gpu_hardware = torch.cuda.get_device_name(0)
+            elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                mps_available = True
+                gpu_hardware = "Apple Silicon GPU"
+        except Exception as e:
+            gpu_hardware = f"Error checking GPU: {str(e)}"
+            
+        if cuda_available:
+            report.append(f"- **CUDA Available:** Yes")
+        else:
+            report.append(f"- **CUDA Available:** No (or missing drivers)")
+            
+        if mps_available:
+            report.append(f"- **MPS Available:** Yes")
+            
+        report.append(f"- **Detected GPU:** {gpu_hardware}")
+        
+        # Dependency Paths
+        report.append("")
+        report.append("### Dependency Paths")
+        
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        ffmpeg_path = os.path.join(base_dir, 'ffmpeg')
+        ffmpeg_exists = "Valid" if os.path.exists(ffmpeg_path) or os.path.exists(ffmpeg_path + ".exe") else "Missing"
+        report.append(f"- **FFmpeg:** `{ffmpeg_path}` ({ffmpeg_exists})")
+        
+        if getattr(sys, 'frozen', False):
+            rub_base = sys._MEIPASS
+        else:
+            rub_base = os.path.join(base_dir, 'lib_v5')
+        rubberband_path = os.path.join(rub_base, 'rubberband')
+        rubberband_exists = "Valid" if os.path.exists(rubberband_path) or os.path.exists(rubberband_path + ".exe") else "Missing"
+        report.append(f"- **Rubber Band:** `{rubberband_path}` ({rubberband_exists})")
+        
+        report_text = "\n".join(report)
+        report_text = redact_sensitive_info(report_text)
+        
+        text_widget.insert("insert", "\n\n" + report_text)
+        text_widget.see(tk.END)
 
     def menu_secondary_model(self, tab, ai_network_vars: dict):
         

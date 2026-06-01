@@ -19,6 +19,9 @@ MISSING_MODEL_ERROR = "'NoneType\' object has no attribute \'model_basename\'"
 ARRAY_SIZE_ERROR = "ValueError: \"array is too big; `arr.size * arr.dtype.itemsize` is larger than the maximum possible size.\""
 GPU_INCOMPATIBLE_ERROR = "no kernel image is available for execution on the device"
 SELECT_CORRECT_GPU = "CUDA kernel errors might be asynchronously reported at some other API call,so the stacktrace below might be incorrect."
+MISSING_DLL_ERROR = "The specified module could not be found"
+ARCHITECTURE_MISMATCH_ERROR_WIN = "not a valid Win32 application"
+ARCHITECTURE_MISMATCH_ERROR_MAC = "wrong architecture"
 
 CONTACT_DEV = 'If this error persists, please contact the developers with the error details.'
 
@@ -76,6 +79,16 @@ ERROR_MAPPER = {
                         'Go to the "Settings Guide", click the "Additional Settings" tab and select the correct GPU device.'),
     ARRAY_SIZE_ERROR:
                         ('The application was not able to process the given audiofile. Please convert the audiofile to another format and try again.'),
+    MISSING_DLL_ERROR:
+                        ('A required library could not be found. This often happens if the Microsoft Visual C++ Redistributable is not installed ' +
+                        'or your FFmpeg installation is missing essential libraries.\n\n' +
+                        'Please install the missing dependencies and try again.'),
+    ARCHITECTURE_MISMATCH_ERROR_WIN:
+                        ('There is an architecture mismatch (e.g., trying to run x64 binaries on an ARM system, or 32-bit vs 64-bit).\n\n' +
+                        'Please ensure your installed Python and application dependencies match your system architecture.'),
+    ARCHITECTURE_MISMATCH_ERROR_MAC:
+                        ('There is an architecture mismatch (e.g., trying to run x64 binaries on an Apple Silicon system).\n\n' +
+                        'Please ensure your installed application dependencies match your system architecture.'),
 }
 
 def error_text(process_method, exception):

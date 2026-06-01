@@ -3205,10 +3205,12 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
         tab1 = ttk.Frame(tabControl)
         tab2 = ttk.Frame(tabControl)
         tab3 = ttk.Frame(tabControl)
+        tab4 = ttk.Frame(tabControl)
 
         tabControl.add(tab1, text = SETTINGS_GUIDE_TEXT)
         tabControl.add(tab2, text = ADDITIONAL_SETTINGS_TEXT)
         tabControl.add(tab3, text = DOWNLOAD_CENTER_TEXT)
+        tabControl.add(tab4, text = "External Envs")
 
         tabControl.pack(expand = 1, fill ="both")
         
@@ -3221,8 +3223,11 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
         tab3.grid_rowconfigure(0, weight=1)
         tab3.grid_columnconfigure(0, weight=1)
 
-        self.disable_tabs = lambda:(tabControl.tab(0, state="disabled"), tabControl.tab(1, state="disabled"))
-        self.enable_tabs = lambda:(tabControl.tab(0, state="normal"), tabControl.tab(1, state="normal"))        
+        tab4.grid_rowconfigure(0, weight=1)
+        tab4.grid_columnconfigure(0, weight=1)
+
+        self.disable_tabs = lambda:(tabControl.tab(0, state="disabled"), tabControl.tab(1, state="disabled"), tabControl.tab(3, state="disabled"))
+        self.enable_tabs = lambda:(tabControl.tab(0, state="normal"), tabControl.tab(1, state="normal"), tabControl.tab(3, state="normal"))        
         self.main_menu_var = tk.StringVar(value=CHOOSE_ADVANCED_MENU_TEXT) 
 
         self.download_progress_bar_var.set(0)
@@ -3433,6 +3438,31 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
                                    self.model_download_demucs_var)
         
         self.online_data_refresh()
+
+        #Settings Tab 4
+        settings_menu_ext_env_Frame = self.menu_FRAME_SET(tab4)
+        settings_menu_ext_env_Frame.grid(row=0)  
+        
+        ext_env_title_Label = self.menu_title_LABEL_SET(settings_menu_ext_env_Frame, "External Environment Mappings")
+        ext_env_title_Label.grid(padx=20,pady=MENU_PADDING_2)
+
+        ext_env_sub_Label = self.menu_sub_LABEL_SET(settings_menu_ext_env_Frame, "Set path to Python executable for each architecture:")
+        ext_env_sub_Label.grid(pady=MENU_PADDING_2)
+
+        ext_env_vr_Label = self.menu_sub_LABEL_SET(settings_menu_ext_env_Frame, "VR Architecture Python Path:")
+        ext_env_vr_Label.grid(pady=2)
+        ext_env_vr_Entry = ttk.Entry(settings_menu_ext_env_Frame, textvariable=self.ext_env_vr_var, width=50)
+        ext_env_vr_Entry.grid(pady=2)
+
+        ext_env_mdx_Label = self.menu_sub_LABEL_SET(settings_menu_ext_env_Frame, "MDX-Net Architecture Python Path:")
+        ext_env_mdx_Label.grid(pady=2)
+        ext_env_mdx_Entry = ttk.Entry(settings_menu_ext_env_Frame, textvariable=self.ext_env_mdx_var, width=50)
+        ext_env_mdx_Entry.grid(pady=2)
+
+        ext_env_demucs_Label = self.menu_sub_LABEL_SET(settings_menu_ext_env_Frame, "Demucs Architecture Python Path:")
+        ext_env_demucs_Label.grid(pady=2)
+        ext_env_demucs_Entry = ttk.Entry(settings_menu_ext_env_Frame, textvariable=self.ext_env_demucs_var, width=50)
+        ext_env_demucs_Entry.grid(pady=MENU_PADDING_1)
 
         self.menu_placement(settings_menu, SETTINGS_GUIDE_TEXT, is_help_hints=True, close_function=lambda:close_window())
 
@@ -6628,14 +6658,73 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
                                     'is_ensemble_master': is_ensemble,
                                     'is_4_stem_ensemble': True if self.ensemble_main_stem_var.get() in [FOUR_STEM_ENSEMBLE, MULTI_STEM_ENSEMBLE] and is_ensemble else False}
                     
+                    ext_env_path = ''
                     if current_model.process_method == VR_ARCH_TYPE:
-                        seperator = SeperateVR(current_model, process_data)
-                    if current_model.process_method == MDX_ARCH_TYPE:
-                        seperator = SeperateMDXC(current_model, process_data) if current_model.is_mdx_c else SeperateMDX(current_model, process_data)
-                    if current_model.process_method == DEMUCS_ARCH_TYPE:
-                        seperator = SeperateDemucs(current_model, process_data)
-                        
-                    seperator.seperate()
+                        ext_env_path = self.ext_env_vr_var.get()
+                    elif current_model.process_method == MDX_ARCH_TYPE:
+                        ext_env_path = self.ext_env_mdx_var.get()
+                    elif current_model.process_method == DEMUCS_ARCH_TYPE:
+                        ext_env_path = self.ext_env_demucs_var.get()
+
+                    if ext_env_path and ext_env_path.strip():
+                        import tempfile
+                        m_data = {k: v for k, v in current_model.__dict__.items() if isinstance(v, (str, int, float, bool, list, dict, type(None)))}
+                        p_data = {
+                            'export_path': export_path,
+                            'audio_file_base': audio_file_base,
+                            'audio_file': audio_file,
+                            'list_all_models': self.all_models,
+                            'is_ensemble_master': is_ensemble,
+                            'is_4_stem_ensemble': process_data['is_4_stem_ensemble']
+                        }
+                        fd_m, m_path = tempfile.mkstemp(suffix=".json")
+                        fd_p, p_path = tempfile.mkstemp(suffix=".json")
+                        with open(m_path, 'w') as f:
+                            json.dump(m_data, f)
+                        with open(p_path, 'w') as f:
+                            json.dump(p_data, f)
+                        os.close(fd_m)
+                        os.close(fd_p)
+                        bridge_script = os.path.join(BASE_PATH, "cli_bridge.py")
+                        try:
+                            proc = subprocess.Popen([ext_env_path.strip(), bridge_script, m_path, p_path],
+                                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                                    text=True, bufsize=1)
+                            for line in proc.stdout:
+                                line = line.strip()
+                                if line.startswith("UVR_CLI_BRIDGE_PROGRESS:"):
+                                    try:
+                                        set_progress_bar(float(line.split(":", 1)[1]))
+                                    except:
+                                        pass
+                                elif line.startswith("UVR_CLI_BRIDGE_CONSOLE:"):
+                                    write_to_console(line.split(":", 1)[1])
+                                elif line == "UVR_CLI_BRIDGE_DONE":
+                                    pass
+                                else:
+                                    write_to_console(line + "\n")
+                            proc.wait()
+                            if proc.returncode != 0:
+                                raise Exception(f"External environment returned non-zero exit code: {proc.returncode}")
+                        finally:
+                            os.remove(m_path)
+                            os.remove(p_path)
+                    else:
+                        try:
+                            if current_model.process_method == VR_ARCH_TYPE:
+                                seperator = SeperateVR(current_model, process_data)
+                            if current_model.process_method == MDX_ARCH_TYPE:
+                                seperator = SeperateMDXC(current_model, process_data) if current_model.is_mdx_c else SeperateMDX(current_model, process_data)
+                            if current_model.process_method == DEMUCS_ARCH_TYPE:
+                                seperator = SeperateDemucs(current_model, process_data)
+                                
+                            seperator.seperate()
+                        except Exception as e:
+                            err_msg = str(e)
+                            if "ModuleNotFoundError" in repr(e) or "ImportError" in repr(e) or "not found" in err_msg.lower():
+                                raise Exception(f"{err_msg}\n\nIf this model requires an external environment, please configure its path in Settings -> External Envs.")
+                            else:
+                                raise
                     
                     if is_ensemble:
                         self.command_Text.write('\n')
@@ -6724,6 +6813,11 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
 
         ## ADD_BUTTON
         self.chosen_process_method_var = tk.StringVar(value=data['chosen_process_method'])
+        
+        #External Environment Vars
+        self.ext_env_vr_var = tk.StringVar(value=data.get('ext_env_vr', ''))
+        self.ext_env_mdx_var = tk.StringVar(value=data.get('ext_env_mdx', ''))
+        self.ext_env_demucs_var = tk.StringVar(value=data.get('ext_env_demucs', ''))
         
         #VR Architecture Vars
         self.vr_model_var = tk.StringVar(value=data['vr_model'])
@@ -6872,6 +6966,10 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
                 
         is_default_reset = True if process_method == ENSEMBLE_MODE or is_default_reset else False
         
+        self.ext_env_vr_var.set(loaded_setting.get('ext_env_vr', ''))
+        self.ext_env_mdx_var.set(loaded_setting.get('ext_env_mdx', ''))
+        self.ext_env_demucs_var.set(loaded_setting.get('ext_env_demucs', ''))
+
         if process_method == VR_ARCH_PM or is_default_reset:
             self.vr_model_var.set(loaded_setting['vr_model'])
             self.aggression_setting_var.set(loaded_setting['aggression_setting'])
@@ -7005,6 +7103,9 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
 
         # -Save Data-
         main_settings={
+            'ext_env_vr': self.ext_env_vr_var.get(),
+            'ext_env_mdx': self.ext_env_mdx_var.get(),
+            'ext_env_demucs': self.ext_env_demucs_var.get(),
             'vr_model': self.vr_model_var.get(),
             'aggression_setting': self.aggression_setting_var.get(),
             'window_size': self.window_size_var.get(),

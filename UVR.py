@@ -11,6 +11,7 @@ import natsort
 import os
 import pickle
 import psutil
+import pyglet
 from pyglet import font as pyglet_font
 import pyperclip
 import base64
@@ -5772,6 +5773,11 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
                                self.wav_type_set_Option_place],
             }
             place_widgets(*audio_tool_options.get(audio_tool, []))
+        elif process_method == BENCHMARK_MODE:
+            place_widgets(self.ensemble_listbox_Label_place, 
+                          self.ensemble_listbox_Option_place, 
+                          self.ensemble_listbox_Option_pack,
+                          general_shared_buttons)
         elif process_method == ENSEMBLE_MODE:
             place_widgets(self.chosen_ensemble_Label_place, 
                           self.chosen_ensemble_Option_place, 
@@ -5976,6 +5982,11 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
         if from_widget:
             self.save_current_settings_var.set(CHOOSE_ENSEMBLE_OPTION)
 
+        if selection == BENCHMARK_MODE:
+            self.ensemble_listbox_Option.configure(state=tk.NORMAL)
+            self.ensemble_listbox_clear_and_insert_new(self.ensemble_model_list)
+            return
+
         if selection == ENSEMBLE_MODE:
             ensemble_choice = self.ensemble_main_stem_var.get()
             if ensemble_choice in [CHOOSE_STEM_PAIR, FOUR_STEM_ENSEMBLE, MULTI_STEM_ENSEMBLE]:
@@ -6150,7 +6161,7 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
         
         self.process_check_wav_type()
         
-        if self.chosen_process_method_var.get() == ENSEMBLE_MODE:
+        if self.chosen_process_method_var.get() in [ENSEMBLE_MODE, BENCHMARK_MODE]:
             continue_process = lambda:False if len(self.ensemble_listbox_get_all_selected_models()) <= 1 else True
         if self.chosen_process_method_var.get() == VR_ARCH_PM:
             continue_process = lambda:False if self.vr_model_var.get() == CHOOSE_MODEL else True
@@ -6386,6 +6397,7 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
 
                 audio_tool_action = audio_tool.audio_tool
                 if audio_tool_action not in [MANUAL_ENSEMBLE, ALIGN_INPUTS, MATCH_INPUTS]:
+                    original_audio_file = audio_file
                     audio_file = self.create_sample(audio_file) if is_model_sample_mode else audio_file
                     self.command_Text.write(f'{NEW_LINE if file_num != 1 else NO_LINE}{self.base_text}"{os.path.basename(audio_file)}\".{NEW_LINES}')
                 elif audio_tool_action in [ALIGN_INPUTS, MATCH_INPUTS]:
@@ -6559,9 +6571,18 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
         is_model_sample_mode = self.model_sample_mode_var.get()
         
         try:
-            if self.chosen_process_method_var.get() == ENSEMBLE_MODE:
-                model, ensemble = self.assemble_model_data(), Ensembler()
-                export_path, is_ensemble = ensemble.ensemble_folder_name, True
+            is_benchmark = self.chosen_process_method_var.get() == BENCHMARK_MODE
+            if self.chosen_process_method_var.get() == ENSEMBLE_MODE or is_benchmark:
+                model = self.assemble_model_data()
+                if is_benchmark:
+                    is_model_sample_mode = True
+                    is_ensemble = False
+                    time_stamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.gmtime())
+                    export_path = os.path.join(self.export_path_var.get(), f"Benchmark_{time_stamp}")
+                    if not os.path.isdir(export_path): os.makedirs(export_path)
+                else:
+                    ensemble = Ensembler()
+                    export_path, is_ensemble = ensemble.ensemble_folder_name, True
             if self.chosen_process_method_var.get() == VR_ARCH_PM:
                 model = self.assemble_model_data(self.vr_model_var.get(), VR_ARCH_TYPE)
             if self.chosen_process_method_var.get() == MDX_ARCH_TYPE:
@@ -6582,8 +6603,9 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
                 base_text = self.process_get_baseText(total_files=inputPath_total_len, file_num=file_num)
 
                 if self.verify_audio(audio_file):
+                    original_audio_file = audio_file
                     audio_file = self.create_sample(audio_file) if is_model_sample_mode else audio_file
-                    self.command_Text.write(f'{NEW_LINE if not file_num ==1 else NO_LINE}{base_text}"{os.path.basename(audio_file)}\".{NEW_LINES}')
+                    self.command_Text.write(f'{NEW_LINE if not file_num ==1 else NO_LINE}{base_text}"{os.path.basename(original_audio_file)}\".{NEW_LINES}')
                     is_verified_audio = True
                 else:
                     error_text_console = f'{base_text}"{os.path.basename(audio_file)}\" {MISSING_MESS_TEXT}\n'
@@ -6604,13 +6626,16 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
                     set_progress_bar = lambda step, inference_iterations=0:self.process_update_progress(total_files=inputPath_total_len, step=(step + (inference_iterations)))
                     write_to_console = lambda progress_text, base_text=base_text:self.command_Text.write(base_text + progress_text)
 
-                    audio_file_base = f"{file_num}_{os.path.splitext(os.path.basename(audio_file))[0]}"
+                    audio_file_base = f"{file_num}_{os.path.splitext(os.path.basename(original_audio_file))[0]}"
                     audio_file_base = audio_file_base if not self.is_testing_audio_var.get() or is_ensemble else f"{round(time.time())}_{audio_file_base}"
                     audio_file_base = audio_file_base if not is_ensemble else f"{audio_file_base}_{current_model.model_basename}"
                     if not is_ensemble:
-                        audio_file_base = audio_file_base if not self.is_add_model_name_var.get() else f"{audio_file_base}_{current_model.model_basename}"
+                        if is_benchmark:
+                            audio_file_base = f"{audio_file_base}_{current_model.model_basename}"
+                        else:
+                            audio_file_base = audio_file_base if not self.is_add_model_name_var.get() else f"{audio_file_base}_{current_model.model_basename}"
 
-                    if self.is_create_model_folder_var.get() and not is_ensemble:
+                    if self.is_create_model_folder_var.get() and not is_ensemble and not is_benchmark:
                         export_path = os.path.join(Path(self.export_path_var.get()), current_model.model_basename, os.path.splitext(os.path.basename(audio_file))[0])
                         if not os.path.isdir(export_path):os.makedirs(export_path) 
 
@@ -6635,7 +6660,14 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
                     if current_model.process_method == DEMUCS_ARCH_TYPE:
                         seperator = SeperateDemucs(current_model, process_data)
                         
-                    seperator.seperate()
+                    try:
+                        seperator.seperate()
+                    except Exception as e:
+                        self.command_Text.write(f'\nError processing with {current_model.model_basename}: {e}\n')
+                        if not is_benchmark:
+                            raise e
+                        else:
+                            continue
                     
                     if is_ensemble:
                         self.command_Text.write('\n')
@@ -6676,6 +6708,8 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
                 self.command_Text.write(time_elapsed())
                 playsound(COMPLETE_CHIME) if self.is_task_complete_var.get() else None
                 
+            if self.chosen_process_method_var.get() == BENCHMARK_MODE:
+                self.after(0, lambda: self.open_benchmark_player(export_path))
             self.process_end()
                         
         except Exception as e:
@@ -7163,6 +7197,134 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
         else:
             return {**main_settings, **user_saved_extras}
 
+
+    def open_benchmark_player(self, export_path):
+        import pyglet.media as media
+        from pyglet import clock
+        import glob
+        
+        # Get all generated wav files
+        wav_files = glob.glob(os.path.join(export_path, "*.wav"))
+        if not wav_files:
+            return
+            
+        player_win = tk.Toplevel(self)
+        player_win.title("Benchmark Player")
+        player_win.geometry("500x400")
+        player_win.configure(bg=BG_COLOR)
+        player_win.attributes("-topmost", True)
+        
+        # UI
+        title_lbl = tk.Label(player_win, text="Benchmark Results", bg=BG_COLOR, fg="#13849f", font=(MAIN_FONT_NAME, 16, "bold"))
+        title_lbl.pack(pady=10)
+        
+        instruction_lbl = tk.Label(player_win, text="Select a model below to listen and compare gaplessly.", bg=BG_COLOR, fg="#13849f")
+        instruction_lbl.pack(pady=5)
+        
+        players = {}
+        
+        for file in wav_files:
+            try:
+                # Load audio
+                player = media.Player()
+                source = media.load(file)
+                player.queue(source)
+                player.loop = True
+                player.volume = 0.0
+                model_name_ext = os.path.basename(file)
+                players[model_name_ext] = {'player': player, 'file': file}
+            except Exception as e:
+                print(f"Failed to load {file} in pyglet: {e}")
+                
+        if not players:
+            player_win.destroy()
+            return
+            
+        current_selection = tk.StringVar(value=list(players.keys())[0])
+        players[current_selection.get()]['player'].volume = 1.0
+        
+        def switch_audio():
+            selected = current_selection.get()
+            for name, data in players.items():
+                if name == selected:
+                    data['player'].volume = 1.0
+                else:
+                    data['player'].volume = 0.0
+                    
+        radio_frame = tk.Frame(player_win, bg=BG_COLOR)
+        radio_frame.pack(pady=10, fill=tk.BOTH, expand=True)
+        
+        for name in players.keys():
+            rb = tk.Radiobutton(radio_frame, text=name, variable=current_selection, value=name,
+                                command=switch_audio, bg=BG_COLOR, fg="#13849f", selectcolor=BG_COLOR, font=(MAIN_FONT_NAME, 11))
+            rb.pack(anchor="w", padx=20)
+            
+        # Play controls
+        controls_frame = tk.Frame(player_win, bg=BG_COLOR)
+        controls_frame.pack(pady=10)
+        
+        is_playing = tk.BooleanVar(value=False)
+        
+        def toggle_play():
+            if is_playing.get():
+                for data in players.values():
+                    data['player'].pause()
+                is_playing.set(False)
+                play_btn.config(text="Play")
+            else:
+                for data in players.values():
+                    data['player'].play()
+                is_playing.set(True)
+                play_btn.config(text="Pause")
+                
+        play_btn = ttk.Button(controls_frame, text="Play", command=toggle_play, width=15)
+        play_btn.pack(side=tk.LEFT, padx=10)
+        
+        # Winner selection
+        def set_winner():
+            selected_file = current_selection.get()
+            # Try to map filename back to model
+            for model_obj in self.ensemble_listbox_get_all_selected_models():
+                model_basename = model_obj.split(ENSEMBLE_PARTITION)[-1] if ENSEMBLE_PARTITION in model_obj else model_obj
+                if model_basename in selected_file:
+                    model_method = None
+                    if model_obj in self.vr_model_list:
+                        model_method = VR_ARCH_PM
+                        self.vr_model_var.set(model_basename)
+                    elif model_obj in self.mdx_model_list:
+                        model_method = MDX_ARCH_TYPE
+                        self.mdx_net_model_var.set(model_basename)
+                    elif model_obj in self.demucs_model_list:
+                        model_method = DEMUCS_ARCH_TYPE
+                        self.demucs_model_var.set(model_basename)
+                        
+                    if model_method:
+                        self.chosen_process_method_var.set(model_method)
+                        self.selection_action_process_method(model_method, from_widget=True)
+                    break
+            
+            player_win.on_close()
+            
+        winner_btn = ttk.Button(controls_frame, text="Set as Winner & Exit", command=set_winner, width=20)
+        winner_btn.pack(side=tk.LEFT, padx=10)
+        
+        def update_pyglet():
+            clock.tick()
+            if player_win.winfo_exists():
+                player_win.after(50, update_pyglet)
+                
+        def on_close():
+            for data in players.values():
+                data['player'].pause()
+                data['player'].delete()
+            player_win.destroy()
+            
+        player_win.on_close = on_close
+        player_win.protocol("WM_DELETE_WINDOW", on_close)
+        
+        player_win.after(50, update_pyglet)
+        toggle_play() # start playing immediately
+        
     def get_settings_list(self):
         
         settings_dict = self.save_values(app_close=False)

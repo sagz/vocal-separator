@@ -584,6 +584,7 @@ DEFAULT_DATA = {
         'is_chunk_mdxnet': False,
         'is_primary_stem_only_Demucs': False,
         'is_secondary_stem_only_Demucs': False,
+        'is_smart_auto': True,
         'is_split_mode': True,
         'is_demucs_combine_stems': True,#
         'is_mdx23_combine_stems': True,#
@@ -1356,6 +1357,8 @@ CHOOSE_MANUAL_ALGORITHM_MAIN_LABEL = 'CHOOSE ALGORITHM'
 CHOOSE_RATE_MAIN_LABEL = 'RATE'
 CHOOSE_SEMITONES_MAIN_LABEL = 'SEMITONES'
 GPU_CONVERSION_MAIN_LABEL = 'GPU Conversion'
+SMART_AUTO_MAIN_LABEL = 'Smart Auto Mode'
+IS_SMART_AUTO_HELP = 'Automatically adapts parameters based on available memory and GPU.'
 CHANGE_LOG_HEADER = lambda patch:f"Patch Version:\n\n{patch}"
 INVALID_INPUT_E = ' Invalid input! '
 LB_UP = "Move Selection Up"

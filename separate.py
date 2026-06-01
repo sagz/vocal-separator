@@ -62,6 +62,18 @@ def clear_gpu_cache():
     else:
         torch.cuda.empty_cache()
 
+def get_vram_gb():
+    vram_gb = 0
+    try:
+        if torch.cuda.is_available():
+            vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        elif is_macos and torch.backends.mps.is_available():
+            import psutil
+            vram_gb = psutil.virtual_memory().total / (1024**3)
+    except Exception:
+        pass
+    return vram_gb
+
 warnings.filterwarnings("ignore")
 cpu = torch.device('cpu')
 
@@ -274,7 +286,34 @@ class SeperateAttributes:
             self.aggressiveness = {'value': model_data.aggression_setting, 
                                    'split_bin': self.mp.param['band'][1]['crop_stop'], 
                                    'aggr_correction': self.mp.param.get('aggr_correction')}
-            
+        
+        if self.process_data.get('is_smart_auto', False):
+            vram = get_vram_gb()
+            if hasattr(self, 'mdx_batch_size'):
+                if vram >= 16:
+                    self.mdx_batch_size = 12
+                    self.mdx_segment_size = 256
+                elif vram >= 8:
+                    self.mdx_batch_size = 4
+                    self.mdx_segment_size = 256
+                else:
+                    self.mdx_batch_size = 1
+                    self.mdx_segment_size = 256
+            if hasattr(self, 'segment'):
+                if vram >= 16:
+                    self.segment = 100
+                elif vram >= 8:
+                    self.segment = 40
+                else:
+                    self.segment = 10
+            if hasattr(self, 'batch_size'):
+                if vram >= 16:
+                    self.batch_size = 16
+                elif vram >= 8:
+                    self.batch_size = 4
+                else:
+                    self.batch_size = 1
+
     def check_label_secondary_stem_runs(self):
 
         # For ensemble master that's not a 4-stem ensemble, and not mdx_c
@@ -469,6 +508,57 @@ class SeperateAttributes:
 
         return source
 
+    def _demix_with_retry(self, func, *args, **kwargs):
+        max_retries = 3
+        is_smart_auto = self.process_data.get('is_smart_auto', False)
+        for attempt in range(max_retries + 1):
+            try:
+                return func(*args, **kwargs)
+            except RuntimeError as e:
+                if "out of memory" in str(e).lower() or "not enough memory" in str(e).lower() or "allocate" in str(e).lower():
+                    if not is_smart_auto or attempt >= max_retries:
+                        if is_smart_auto and self.is_gpu_conversion >= 0:
+                            self.write_to_console(f"VRAM insufficient at minimum settings, falling back to CPU...", base_text='')
+                            self.device = cpu
+                            self.run_type = ['CPUExecutionProvider']
+                            if hasattr(self, 'model_run') and hasattr(self.model_run, 'to'):
+                                self.model_run.to(self.device)
+                            if hasattr(self, 'demucs') and hasattr(self.demucs, 'to'):
+                                self.demucs.to(self.device)
+                            clear_gpu_cache()
+                            return func(*args, **kwargs)
+                        raise e
+                    
+                    self.write_to_console(f"Optimizing for memory... Retry {attempt+1}/{max_retries}", base_text='')
+                    if hasattr(self, 'mdx_batch_size'):
+                        new_batch = max(1, int(self.mdx_batch_size * 0.8))
+                        if new_batch == self.mdx_batch_size:
+                            if isinstance(self.mdx_segment_size, str) and not self.mdx_segment_size.isdigit():
+                                self.mdx_segment_size = 256
+                            self.mdx_segment_size = max(32, int(int(self.mdx_segment_size) * 0.8))
+                        self.mdx_batch_size = new_batch
+                        self.write_to_console(f"Reduced MDX Batch Size to {self.mdx_batch_size}, Segment Size to {self.mdx_segment_size}", base_text='')
+                    elif hasattr(self, 'segment'):
+                        if self.segment == 'Default' or self.segment == 'None' or self.segment == DEF_OPT:
+                            self.segment = 40
+                        else:
+                            self.segment = max(1, int(int(self.segment) * 0.8))
+                        if hasattr(self, 'demucs'):
+                            from demucs.apply import demucs_segments
+                            self.demucs = demucs_segments(int(self.segment), self.demucs)
+                        self.write_to_console(f"Reduced Demucs Segment Size to {self.segment}", base_text='')
+                    elif hasattr(self, 'batch_size'):
+                        new_batch = max(1, int(self.batch_size * 0.8))
+                        if new_batch == self.batch_size:
+                            if hasattr(self, 'window_size'):
+                                self.window_size = max(32, int(int(self.window_size) * 0.8))
+                        self.batch_size = new_batch
+                        self.write_to_console(f"Reduced VR Batch Size to {self.batch_size}", base_text='')
+                    clear_gpu_cache()
+                else:
+                    raise e
+        return func(*args, **kwargs)
+
 class SeperateMDX(SeperateAttributes):        
 
     def seperate(self):
@@ -496,7 +586,7 @@ class SeperateMDX(SeperateAttributes):
             self.running_inference_console_write()
             mix = prepare_mix(self.audio_file)
             
-            source = self.demix(mix)
+            source = self._demix_with_retry(self.demix, mix)
             
             if not self.is_vocal_split_model:
                 self.cache_source((mix, source))
@@ -510,7 +600,7 @@ class SeperateMDX(SeperateAttributes):
         if not self.is_primary_stem_only:
             secondary_stem_path = os.path.join(self.export_path, f'{self.audio_file_base}_({self.secondary_stem}).wav')
             if not isinstance(self.secondary_source, np.ndarray):
-                raw_mix = self.demix(self.match_frequency_pitch(mix), is_match_mix=True) if mdx_net_cut else self.match_frequency_pitch(mix)
+                raw_mix = self._demix_with_retry(self.demix, self.match_frequency_pitch(mix), is_match_mix=True) if mdx_net_cut else self.match_frequency_pitch(mix)
                 self.secondary_source = spec_utils.invert_stem(raw_mix, source) if self.is_invert_spec else mix.T-source.T
             
             self.secondary_source_map = self.final_process(secondary_stem_path, self.secondary_source, self.secondary_source_secondary, self.secondary_stem, samplerate)
@@ -649,7 +739,7 @@ class SeperateMDXC(SeperateAttributes):
             self.start_inference_console_write()
             self.running_inference_console_write()
             mix = prepare_mix(self.audio_file)
-            sources = self.demix(mix)
+            sources = self._demix_with_retry(self.demix, mix)
             if not self.is_vocal_split_model:
                 self.cache_source((mix, sources))
             self.write_to_console(DONE, base_text='')
@@ -845,7 +935,7 @@ class SeperateDemucs(SeperateAttributes):
                     inst_mix = prepare_mix(mix_no_voc[INST_STEM])
                     self.process_iteration()
                     self.running_inference_console_write(is_no_write=is_no_write)
-                    inst_source = self.demix_demucs(inst_mix)
+                    inst_source = self._demix_with_retry(self.demix_demucs, inst_mix)
                     self.process_iteration()
 
             self.running_inference_console_write(is_no_write=is_no_write) if not self.pre_proc_model else None
@@ -853,7 +943,7 @@ class SeperateDemucs(SeperateAttributes):
             if self.primary_model_name == self.model_basename and isinstance(self.primary_sources, np.ndarray) and self.pre_proc_model:
                 source = self.primary_sources
             else:
-                source = self.demix_demucs(mix)
+                source = self._demix_with_retry(self.demix_demucs, mix)
             
             self.write_to_console(DONE, base_text='')
             
@@ -1052,7 +1142,7 @@ class SeperateVR(SeperateAttributes):
 
             self.running_inference_console_write()
                         
-            y_spec, v_spec = self.inference_vr(self.loading_mix(), device, self.aggressiveness)
+            y_spec, v_spec = self._demix_with_retry(self.inference_vr, self.loading_mix(), device, self.aggressiveness)
             if not self.is_vocal_split_model:
                 self.cache_source((y_spec, v_spec))
             self.write_to_console(DONE, base_text='')

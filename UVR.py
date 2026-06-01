@@ -36,6 +36,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from datetime import datetime
 from gui_data.constants import *
+import plugin_manager
 from gui_data.app_size_values import *
 from gui_data.error_handling import error_text, error_dialouge
 from gui_data.old_data_check import file_check, remove_unneeded_yamls, remove_temps
@@ -1595,6 +1596,8 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
             model_data: List[ModelData] = [ModelData(model, MDX_ARCH_TYPE)]
         if arch_type == DEMUCS_ARCH_TYPE:
             model_data: List[ModelData] = [ModelData(model, DEMUCS_ARCH_TYPE)]#
+        if arch_type in plugin_manager.PLUGINS:
+            model_data = [plugin_manager.PLUGINS[arch_type].get_model_data(self)]
 
         return model_data
         
@@ -2571,6 +2574,8 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
             MDX_ARCH_TYPE: lambda: self.check_is_menu_open(MDX_OPTION),
             DEMUCS_ARCH_TYPE: lambda: self.check_is_menu_open(DEMUCS_OPTION)
         }
+        for p_name in plugin_manager.PLUGINS:
+            settings_mapper[p_name] = lambda p=p_name: self.menu_advanced_plugin_options(p)
         
         var_mapper = {
             ENSEMBLE_MODE: True,
@@ -2578,6 +2583,8 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
             MDX_ARCH_TYPE: self.mdx_is_secondary_model_activate_var.get(),
             DEMUCS_ARCH_TYPE: self.demucs_is_secondary_model_activate_var.get()
         }
+        for p_name in plugin_manager.PLUGINS:
+            var_mapper[p_name] = False
 
         # Submenu for saved settings
         saved_settings_sub_load_for_menu = tk.Menu(right_click_menu, font=(MAIN_FONT_NAME, FONT_SIZE_1), tearoff=False)
@@ -5607,6 +5614,14 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
         new_ensembles_found = self.get_files_from_dir(ENSEMBLE_CACHE_DIR, JSON)
         new_settings_found = self.get_files_from_dir(SETTINGS_CACHE_DIR, JSON)
         new_models_found = new_vr_models + new_mdx_models + new_demucs_models
+        
+        new_plugin_models = {}
+        for p_name, mod in plugin_manager.PLUGINS.items():
+            if hasattr(mod, 'get_models'):
+                new_plugin_models[p_name] = mod.get_models(self)
+            else:
+                new_plugin_models[p_name] = ["Default Model"]
+            new_models_found += new_plugin_models[p_name]
         is_online = self.is_online_model_menu
         
         def loop_directories(option_menu:ComboBoxMenu, option_var, model_list, model_type, name_mapper=None):
@@ -5635,6 +5650,9 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
             demucs_model_list = loop_directories(self.demucs_model_Option, self.demucs_model_var, new_demucs_models, DEMUCS_ARCH_TYPE, name_mapper=self.demucs_name_select_MAPPER)
             
             self.ensemble_model_list = vr_model_list + mdx_model_list + demucs_model_list
+            for p_name in plugin_manager.PLUGINS:
+                p_model_list = loop_directories(self.plugin_model_Option[p_name], self.plugin_model_var[p_name], new_plugin_models[p_name], p_name)
+                self.ensemble_model_list += p_model_list
             self.default_change_model_list = vr_model_list + mdx_model_list
             self.last_found_models = new_models_found
             self.is_online_model_menu = self.is_online
@@ -5727,6 +5745,12 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
                           self.segment_Option_place, 
                           general_shared_buttons, 
                           stem_save_demucs_options, 
+                          no_ensemble_shared)
+        elif process_method in plugin_manager.PLUGINS:
+            place_widgets(self.plugin_model_Label_place[process_method], 
+                          self.plugin_model_Option_place[process_method], 
+                          general_shared_buttons, 
+                          stem_save_options, 
                           no_ensemble_shared)
         elif process_method == AUDIO_TOOLS:
             place_widgets(self.chosen_audio_tool_Label_place, 
@@ -6158,6 +6182,8 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
             continue_process = lambda:False if self.mdx_net_model_var.get() == CHOOSE_MODEL else True
         if self.chosen_process_method_var.get() == DEMUCS_ARCH_TYPE:
             continue_process = lambda:False if self.demucs_model_var.get() == CHOOSE_MODEL else True
+        if self.chosen_process_method_var.get() in plugin_manager.PLUGINS:
+            continue_process = lambda:False if self.plugin_model_var[self.chosen_process_method_var.get()].get() == CHOOSE_MODEL else True
 
         return continue_process()
 
@@ -6568,6 +6594,8 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
                 model = self.assemble_model_data(self.mdx_net_model_var.get(), MDX_ARCH_TYPE)
             if self.chosen_process_method_var.get() == DEMUCS_ARCH_TYPE:
                 model = self.assemble_model_data(self.demucs_model_var.get(), DEMUCS_ARCH_TYPE)
+            if self.chosen_process_method_var.get() in plugin_manager.PLUGINS:
+                model = self.assemble_model_data(self.plugin_model_var[self.chosen_process_method_var.get()].get(), self.chosen_process_method_var.get())
 
             self.cached_source_model_list_check(model)
             
@@ -6634,6 +6662,8 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
                         seperator = SeperateMDXC(current_model, process_data) if current_model.is_mdx_c else SeperateMDX(current_model, process_data)
                     if current_model.process_method == DEMUCS_ARCH_TYPE:
                         seperator = SeperateDemucs(current_model, process_data)
+                    if current_model.process_method in plugin_manager.PLUGINS:
+                        seperator = plugin_manager.PLUGINS[current_model.process_method].Seperator(current_model, process_data)
                         
                     seperator.seperate()
                     
@@ -6725,6 +6755,14 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
         ## ADD_BUTTON
         self.chosen_process_method_var = tk.StringVar(value=data['chosen_process_method'])
         
+        #Plugin Vars
+        self.plugin_vars = {}
+        for p_name, mod in plugin_manager.PLUGINS.items():
+            self.plugin_vars[p_name] = {}
+            if hasattr(mod, 'CONFIG'):
+                for c in mod.CONFIG:
+                    self.plugin_vars[p_name][c['id']] = tk.StringVar(value=c.get('default', ''))
+
         #VR Architecture Vars
         self.vr_model_var = tk.StringVar(value=data['vr_model'])
         self.aggression_setting_var = tk.StringVar(value=data['aggression_setting'])

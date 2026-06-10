@@ -1356,6 +1356,8 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
         self.mdx_cache_source_mapper = {}
         self.demucs_cache_source_mapper = {}
         
+        self.detect_hardware_vram()
+
         # -Tkinter Value Holders-
         
         try:
@@ -1363,6 +1365,13 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
         except Exception as e:
             self.error_log_var.set(error_text('Loading Saved Variables', e))
             self.load_saved_vars(DEFAULT_DATA)
+            
+        self.apply_smart_defaults()
+        
+        self.batch_size_var.trace_add('write', self.uncheck_smart_defaults)
+        self.mdx_batch_size_var.trace_add('write', self.uncheck_smart_defaults)
+        self.segment_var.trace_add('write', self.uncheck_smart_defaults)
+        self.mdx_segment_size_var.trace_add('write', self.uncheck_smart_defaults)
             
         self.cached_sources_clear()
         
@@ -3307,6 +3316,14 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
 
         audio_format_title_Label = self.menu_title_LABEL_SET(settings_menu_format_Frame, GENERAL_PROCESS_SETTINGS_TEXT)
         audio_format_title_Label.grid(pady=MENU_PADDING_2)
+        
+        vram_info_text = f"Hardware: {self.hw_type} | VRAM: {self.vram_gb:.1f} GB | Tier: {self.hw_tier}"
+        vram_info_Label = self.menu_sub_LABEL_SET(settings_menu_format_Frame, vram_info_text)
+        vram_info_Label.grid(pady=MENU_PADDING_1)
+        
+        smart_defaults_Option = ttk.Checkbutton(settings_menu_format_Frame, text="Smart Defaults Profile", width=GEN_SETTINGS_WIDTH, variable=self.smart_defaults_var, command=self.apply_smart_defaults)
+        smart_defaults_Option.grid()
+        self.help_hints(smart_defaults_Option, text="Automatically configure batch and segment size based on detected VRAM.")
         
         is_testing_audio_Option = ttk.Checkbutton(settings_menu_format_Frame, text=SETTINGS_TEST_MODE_TEXT, width=GEN_SETTINGS_WIDTH, variable=self.is_testing_audio_var) 
         is_testing_audio_Option.grid()
@@ -6847,6 +6864,54 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
         )):
             self.change_state_lambda()
 
+    def detect_hardware_vram(self):
+        self.vram_gb = 0.0
+        self.hw_type = "CPU / Unknown"
+        self.hw_tier = "None"
+        try:
+            if cuda_available:
+                self.vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                self.hw_type = "NVIDIA (CUDA)"
+            elif mps_available:
+                self.vram_gb = psutil.virtual_memory().total / (1024**3)
+                self.hw_type = "Apple (MPS)"
+            
+            if self.vram_gb > 0:
+                if self.vram_gb < 8:
+                    self.hw_tier = "Low"
+                elif self.vram_gb <= 12:
+                    self.hw_tier = "Medium"
+                else:
+                    self.hw_tier = "High"
+        except Exception:
+            pass
+
+    def apply_smart_defaults(self, *args):
+        if self.smart_defaults_var.get() and self.hw_tier != "None":
+            self.setting_smart_defaults = True
+            if self.hw_tier == "Low":
+                self.batch_size_var.set(DEF_OPT)
+                self.mdx_batch_size_var.set(DEF_OPT)
+                self.mdx_segment_size_var.set("256")
+                self.segment_var.set(DEF_OPT)
+            elif self.hw_tier == "Medium":
+                self.batch_size_var.set(DEF_OPT)
+                self.mdx_batch_size_var.set(DEF_OPT)
+                self.mdx_segment_size_var.set("256")
+                self.segment_var.set(DEF_OPT)
+            elif self.hw_tier == "High":
+                self.batch_size_var.set(DEF_OPT)
+                self.mdx_batch_size_var.set("4")
+                self.mdx_segment_size_var.set("256")
+                self.segment_var.set(DEF_OPT)
+            self.setting_smart_defaults = False
+
+    def uncheck_smart_defaults(self, *args):
+        if hasattr(self, 'setting_smart_defaults') and self.setting_smart_defaults:
+            return
+        if hasattr(self, 'smart_defaults_var') and self.smart_defaults_var.get():
+            self.smart_defaults_var.set(False)
+
     def load_saved_vars(self, data):
         """Initializes primary Tkinter vars"""
         
@@ -6856,6 +6921,7 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
                 data['batch_size'] = DEF_OPT
 
         ## ADD_BUTTON
+        self.smart_defaults_var = tk.BooleanVar(value=data.get('smart_defaults', True))
         self.chosen_process_method_var = tk.StringVar(value=data['chosen_process_method'])
         
         #VR Architecture Vars
@@ -7138,6 +7204,7 @@ class MainWindow(TkinterDnD.Tk if is_dnd_compatible else tk.Tk):
 
         # -Save Data-
         main_settings={
+            'smart_defaults': self.smart_defaults_var.get(),
             'vr_model': self.vr_model_var.get(),
             'aggression_setting': self.aggression_setting_var.get(),
             'window_size': self.window_size_var.get(),

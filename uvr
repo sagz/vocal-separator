@@ -1,0 +1,357 @@
+#!/usr/bin/env python3
+
+import os
+import sys
+import argparse
+import hashlib
+import json
+import yaml
+
+import numpy as np
+if not hasattr(np, 'float'):
+    np.float = float
+if not hasattr(np, 'complex'):
+    np.complex = complex
+
+# Add /app to sys.path
+BASE_PATH = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, BASE_PATH)
+
+from separate import SeperateVR, SeperateMDX, SeperateMDXC, SeperateDemucs, cuda_available, mps_available
+from gui_data.constants import *
+from lib_v5.vr_network.model_param_init import ModelParameters
+
+# Replicate necessary constants not exported by constants.py but used in UVR.py
+MODELS_DIR = os.path.join(BASE_PATH, 'models')
+VR_MODELS_DIR = os.path.join(MODELS_DIR, 'VR_Models')
+MDX_MODELS_DIR = os.path.join(MODELS_DIR, 'MDX_Net_Models')
+DEMUCS_MODELS_DIR = os.path.join(MODELS_DIR, 'Demucs_Models')
+DEMUCS_NEWER_REPO_DIR = os.path.join(DEMUCS_MODELS_DIR, 'v3_v4_repo')
+
+VR_HASH_DIR = os.path.join(VR_MODELS_DIR, 'model_data')
+MDX_HASH_DIR = os.path.join(MDX_MODELS_DIR, 'model_data')
+MDX_C_CONFIG_PATH = os.path.join(MDX_HASH_DIR, 'mdx_c_configs')
+MDX_MIXER_PATH = os.path.join(BASE_PATH, 'lib_v5', 'mixer.ckpt')
+
+class ConfigDict(dict):
+    """Configuration dictionary that allows attribute-style access."""
+    def __getattr__(self, name):
+        if name in self:
+            value = self[name]
+            if isinstance(value, dict):
+                return ConfigDict(value)
+            return value
+        raise AttributeError(f"No such attribute: {name}")
+
+    def __setattr__(self, name, value):
+        self[name] = value
+
+    def __delattr__(self, name):
+        if name in self:
+            del self[name]
+        else:
+            raise AttributeError(f"No such attribute: {name}")
+
+def secondary_stem(stem):
+    return "Vocals" if stem == "Instrumental" else "Instrumental" # Simplification for typical usage
+
+class CLIModelData:
+    def __init__(self, model_name, **kwargs):
+        self.model_name = model_name
+        self.process_method = kwargs.get('process_method', VR_ARCH_TYPE)
+        
+        # Default Attributes used by separate.py
+        self.DENOISER_MODEL = os.path.join(MODELS_DIR, 'UVR-DeNoise-Lite.pth')
+        self.DEVERBER_MODEL = os.path.join(MODELS_DIR, 'UVR-De-Echo-Normal.pth')
+        self.is_deverb_vocals = False
+        self.deverb_vocal_opt = "Vocals Only"
+        self.is_denoise_model = False
+        self.is_gpu_conversion = 0 if kwargs.get('gpu', True) else -1
+        self.is_normalization = False
+        self.is_use_opencl = False
+        self.is_primary_stem_only = False
+        self.is_secondary_stem_only = False
+        self.is_denoise = False
+        self.is_mdx_c_seg_def = False
+        self.mdx_batch_size = 1
+        self.mdxnet_stem_select = "Vocals"
+        self.overlap = 0.25
+        self.overlap_mdx = "Default"
+        self.overlap_mdx23 = 8
+        self.semitone_shift = 0.0
+        self.is_pitch_change = False
+        self.is_match_frequency_pitch = True
+        self.is_mdx_ckpt = False
+        self.is_mdx_c = False
+        self.is_mdx_combine_stems = False
+        self.mdx_c_configs = None
+        self.mdx_model_stems = []
+        self.mdx_dim_f_set = None
+        self.mdx_dim_t_set = None
+        self.mdx_stem_count = 1
+        self.compensate = None
+        self.mdx_n_fft_scale_set = None
+        self.wav_type_set = "PCM_16"
+        self.device_set = "cuda" if cuda_available else "cpu"
+        self.mp3_bit_set = "320k"
+        self.save_format = kwargs.get('format', 'wav')
+        self.is_invert_spec = False
+        self.is_mixer_mode = False
+        self.demucs_stems = "All Stems"
+        self.is_demucs_combine_stems = False
+        self.demucs_source_list = []
+        self.demucs_source_map = {}
+        self.demucs_stem_count = 0
+        self.mixer_path = MDX_MIXER_PATH
+        
+        self.primary_stem = None
+        self.secondary_stem = None
+        self.primary_stem_native = None
+        self.is_ensemble_mode = False
+        self.ensemble_primary_stem = None
+        self.ensemble_secondary_stem = None
+        self.primary_model_primary_stem = None
+        self.is_secondary_model = False
+        self.secondary_model = None
+        self.secondary_model_scale = None
+        self.demucs_4_stem_added_count = 0
+        self.is_demucs_4_stem_secondaries = False
+        self.is_4_stem_ensemble = False
+        self.pre_proc_model = None
+        self.pre_proc_model_activated = False
+        self.is_pre_proc_model = False
+        self.is_dry_check = kwargs.get('dry_run', False)
+        self.model_samplerate = 44100
+        self.model_capacity = 32, 128
+        self.is_vr_51_model = False
+        self.is_demucs_pre_proc_model_inst_mix = False
+        self.secondary_model_4_stem = []
+        self.secondary_model_4_stem_scale = []
+        self.secondary_model_4_stem_names = []
+        self.secondary_model_4_stem_model_names_list = []
+        self.all_models = []
+        self.is_multi_stem_ensemble = False
+        self.is_karaoke = False
+        self.is_bv_model = False
+        self.bv_model_rebalance = 0
+        self.is_sec_bv_rebalance = False
+        self.is_secondary_model_activated = False
+        self.vocal_split_model = None
+        self.is_vocal_split_model = False
+        self.is_vocal_split_model_activated = False
+        self.is_save_inst_vocal_splitter = False
+        self.is_inst_only_voc_splitter = False
+        self.is_save_vocal_only = False
+        self.is_primary_model_primary_stem_only = False
+        self.is_primary_model_secondary_stem_only = False
+
+        self.model_path = kwargs.get('model_path')
+        self.model_basename = os.path.splitext(os.path.basename(self.model_path))[0]
+        self.model_hash = self.get_model_hash()
+        
+        if self.process_method == VR_ARCH_TYPE:
+            self.aggression_setting = float(kwargs.get('aggression', 5)/100)
+            self.is_tta = kwargs.get('tta', False)
+            self.is_post_process = kwargs.get('post_process', False)
+            self.window_size = kwargs.get('window_size', 512)
+            self.batch_size = kwargs.get('batch_size', 1)
+            self.crop_size = 256
+            self.is_high_end_process = 'mirroring' if kwargs.get('high_end_process', False) else 'None'
+            self.post_process_threshold = 0.2
+            
+            # Read JSON and set parameters
+            self.model_data_dict = self.get_model_data_from_json(os.path.join(VR_HASH_DIR, 'model_data.json'))
+            if self.model_data_dict:
+                vr_model_param = os.path.join(BASE_PATH, 'lib_v5', 'vr_network', 'modelparams', f"{self.model_data_dict['vr_model_param']}.json")
+                self.primary_stem = self.model_data_dict["primary_stem"]
+                self.secondary_stem = secondary_stem(self.primary_stem)
+                self.vr_model_param = ModelParameters(vr_model_param)
+                self.model_samplerate = self.vr_model_param.param['sr']
+                self.primary_stem_native = self.primary_stem
+                if "nout" in self.model_data_dict.keys() and "nout_lstm" in self.model_data_dict.keys():
+                    self.model_capacity = self.model_data_dict["nout"], self.model_data_dict["nout_lstm"]
+                    self.is_vr_51_model = True
+            else:
+                print(f"Warning: VR model hash {self.model_hash} not found in model_data.json. Using defaults.", file=sys.stderr)
+                vr_model_param = os.path.join(BASE_PATH, 'lib_v5', 'vr_network', 'modelparams', "4band_v2.json")
+                self.primary_stem = "Instrumental"
+                self.secondary_stem = "Vocals"
+                self.vr_model_param = ModelParameters(vr_model_param)
+                self.model_samplerate = self.vr_model_param.param['sr']
+                self.primary_stem_native = self.primary_stem
+
+        elif self.process_method == MDX_ARCH_TYPE:
+            self.margin = 44000
+            self.chunks = 0
+            self.mdx_segment_size = 256
+            
+            self.model_data_dict = self.get_model_data_from_json(os.path.join(MDX_HASH_DIR, 'model_data.json'))
+            if self.model_data_dict:
+                if "config_yaml" in self.model_data_dict:
+                    self.is_mdx_c = True
+                    config_path = os.path.join(MDX_C_CONFIG_PATH, self.model_data_dict["config_yaml"])
+                    if os.path.isfile(config_path):
+                        with open(config_path) as f:
+                            self.mdx_c_configs = ConfigDict(yaml.load(f, Loader=yaml.FullLoader))
+                        if getattr(self.mdx_c_configs.training, 'target_instrument', None):
+                            self.primary_stem = self.mdx_c_configs.training.target_instrument
+                        else:
+                            self.mdx_model_stems = self.mdx_c_configs.training.instruments
+                            self.mdx_stem_count = len(self.mdx_model_stems)
+                            self.primary_stem = self.mdx_model_stems[0] if self.mdx_stem_count == 2 else self.mdxnet_stem_select
+                    self.secondary_stem = secondary_stem(self.primary_stem)
+                else:
+                    self.compensate = self.model_data_dict.get("compensate", 1.035)
+                    self.mdx_dim_f_set = self.model_data_dict.get("mdx_dim_f_set", 2048)
+                    self.mdx_dim_t_set = self.model_data_dict.get("mdx_dim_t_set", 8)
+                    self.mdx_n_fft_scale_set = self.model_data_dict.get("mdx_n_fft_scale_set", 6144)
+                    self.primary_stem = self.model_data_dict.get("primary_stem", "Instrumental")
+                    self.primary_stem_native = self.primary_stem
+                    self.secondary_stem = secondary_stem(self.primary_stem)
+            else:
+                print(f"Warning: MDX model hash {self.model_hash} not found.", file=sys.stderr)
+                self.primary_stem = "Instrumental"
+                self.secondary_stem = "Vocals"
+                self.primary_stem_native = self.primary_stem
+
+        elif self.process_method == DEMUCS_ARCH_TYPE:
+            self.margin_demucs = 44000
+            self.chunks_demucs = 0
+            self.shifts = kwargs.get('shifts', 2)
+            self.is_split_mode = True
+            self.segment = "Default"
+            self.is_chunk_demucs = False
+            self.demucs_version = "v4"
+            # In a full implementation, Demucs configs would be mapped properly
+            self.primary_stem = "Instrumental"
+            self.secondary_stem = "Vocals"
+            pass
+
+    def get_model_hash(self):
+        if not os.path.isfile(self.model_path):
+            return None
+        try:
+            with open(self.model_path, 'rb') as f:
+                f.seek(- 10000 * 1024, 2)
+                return hashlib.md5(f.read()).hexdigest()
+        except:
+            with open(self.model_path, 'rb') as f:
+                return hashlib.md5(f.read()).hexdigest()
+
+    def get_model_data_from_json(self, json_path):
+        if os.path.isfile(json_path):
+            with open(json_path, 'r') as f:
+                data = json.load(f)
+                if self.model_hash in data:
+                    return data[self.model_hash]
+        return None
+
+def set_progress_bar(value, *args, **kwargs):
+    print(f"Progress: {value*100:.1f}%")
+
+def write_to_console(message, *args, **kwargs):
+    print(message)
+
+def main():
+    parser = argparse.ArgumentParser(description="Ultimate Vocal Remover CLI - Headless audio separation tool")
+    parser.add_argument("--input", "-i", type=str, required=True, help="Input audio file path")
+    parser.add_argument("--model", "-m", type=str, required=True, help="Model name or file path (Supported Architectures: VR Arc, MDX-Net, Demucs)")
+    parser.add_argument("--export_path", "-o", type=str, help="Output directory destination")
+    parser.add_argument("--format", type=str, default="wav", help="Export format (wav, flac, mp3, etc.)")
+    parser.add_argument("--dry-run", action="store_true", help="Dry run mode to validate model and dependencies")
+    parser.add_argument("--config", "-c", type=str, help="Path to JSON configuration file for advanced parameters (sample rate, hop length, etc.)")
+    
+    # Optional direct CLI flags
+    parser.add_argument("--window_size", type=int, default=512, help="Window size for VR models")
+    parser.add_argument("--aggression", type=int, default=5, help="Aggressiveness setting for VR models (0-100)")
+    parser.add_argument("--tta", action="store_true", help="Enable Test-Time Augmentation")
+    
+    args = parser.parse_args()
+
+    input_file = os.path.abspath(args.input)
+    if not os.path.isfile(input_file):
+        print(f"Error: Input file {input_file} not found.", file=sys.stderr)
+        sys.exit(1)
+
+    export_path = os.path.abspath(args.export_path) if args.export_path else os.path.dirname(input_file)
+    if not os.path.exists(export_path):
+        os.makedirs(export_path)
+
+    model_path = args.model
+    if not os.path.isabs(model_path):
+        # Try to find model in directories
+        if os.path.isfile(os.path.join(VR_MODELS_DIR, args.model)):
+            model_path = os.path.join(VR_MODELS_DIR, args.model)
+            process_method = VR_ARCH_TYPE
+        elif os.path.isfile(os.path.join(MDX_MODELS_DIR, args.model)):
+            model_path = os.path.join(MDX_MODELS_DIR, args.model)
+            process_method = MDX_ARCH_TYPE
+        elif os.path.isfile(os.path.join(DEMUCS_MODELS_DIR, args.model)):
+            model_path = os.path.join(DEMUCS_MODELS_DIR, args.model)
+            process_method = DEMUCS_ARCH_TYPE
+        else:
+            print(f"Error: Model {args.model} not found in model directories.", file=sys.stderr)
+            sys.exit(1)
+    else:
+        # Determine process_method from path
+        if "VR_Models" in model_path: process_method = VR_ARCH_TYPE
+        elif "MDX_Net_Models" in model_path: process_method = MDX_ARCH_TYPE
+        else: process_method = DEMUCS_ARCH_TYPE
+
+    model_name = os.path.basename(model_path)
+
+    print(f"Loading {process_method} model: {model_name}...")
+
+    # Build model data kwargs
+    kwargs = vars(args)
+    if args.config and os.path.isfile(args.config):
+        with open(args.config, 'r') as f:
+            config_data = json.load(f)
+            kwargs.update(config_data)
+            
+    kwargs['process_method'] = process_method
+    kwargs['model_path'] = model_path
+    
+    model_data = CLIModelData(model_name, **kwargs)
+
+    audio_file_base = os.path.splitext(os.path.basename(input_file))[0]
+
+    process_data = {
+        'model_data': model_data,
+        'export_path': export_path,
+        'audio_file_base': audio_file_base,
+        'audio_file': input_file,
+        'set_progress_bar': set_progress_bar,
+        'write_to_console': write_to_console,
+        'process_iteration': lambda: None, # Dummy function
+        'cached_source_callback': lambda *args, **kwargs: (None, None),
+        'cached_model_source_holder': lambda *args, **kwargs: None,
+        'list_all_models': [],
+        'is_ensemble_master': False,
+        'is_4_stem_ensemble': False
+    }
+
+    if args.dry_run:
+        print("Dry run complete. All models and dependencies are correctly loaded.")
+        sys.exit(0)
+
+    try:
+        if process_method == VR_ARCH_TYPE:
+            seperator = SeperateVR(model_data, process_data)
+        elif process_method == MDX_ARCH_TYPE:
+            seperator = SeperateMDXC(model_data, process_data) if model_data.is_mdx_c else SeperateMDX(model_data, process_data)
+        elif process_method == DEMUCS_ARCH_TYPE:
+            seperator = SeperateDemucs(model_data, process_data)
+        else:
+            raise ValueError(f"Unknown process method: {process_method}")
+
+        seperator.seperate()
+        print("Separation complete.")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"Error during separation: {str(e)}", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

@@ -1,6 +1,13 @@
 # GUI modules
 import time
 #start_time = time.time()
+
+try:
+    import preflight_validator
+    preflight_validator.run_preflight_checks()
+except Exception as e:
+    print("Preflight check failed or skipped:", e)
+
 import audioread
 import gui_data.sv_ttk
 import hashlib
